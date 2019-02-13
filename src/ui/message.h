@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -16,7 +17,8 @@
 #include "ui/message_type.h"
 #include "ui/mouse_buttons.h"
 #include "ui/pointer_type.h"
-#include "ui/widgets_list.h"
+
+#include <functional>
 
 namespace ui {
 
@@ -24,20 +26,20 @@ namespace ui {
   class Widget;
 
   class Message {
+    enum Flags {
+      FromFilter          = 1,  // Sent from pre-filter
+      PropagateToChildren = 2,
+      PropagateToParent   = 4,
+    };
   public:
-    typedef WidgetsList::iterator& recipients_iterator;
-
     Message(MessageType type,
             KeyModifiers modifiers = kKeyUninitializedModifier);
     virtual ~Message();
 
     MessageType type() const { return m_type; }
-    const WidgetsList& recipients() const { return m_recipients; }
-    bool hasRecipients() const { return !m_recipients.empty(); }
-    bool isUsed() const { return m_used; }
-    bool fromFilter() const { return m_fromFilter; }
-    void setFromFilter(bool state) { m_fromFilter = state; }
-    void markAsUsed() { m_used = true; }
+    Widget* recipient() const { return m_recipient; }
+    bool fromFilter() const { return hasFlag(FromFilter); }
+    void setFromFilter(const bool state) { setFlag(FromFilter, state); }
     KeyModifiers modifiers() const { return m_modifiers; }
     bool shiftPressed() const { return (m_modifiers & kKeyShiftModifier) == kKeyShiftModifier; }
     bool ctrlPressed() const { return (m_modifiers & kKeyCtrlModifier) == kKeyCtrlModifier; }
@@ -50,18 +52,41 @@ namespace ui {
     bool onlyCmdPressed() const { return m_modifiers == kKeyCmdModifier; }
     bool onlyWinPressed() const { return m_modifiers == kKeyWinModifier; }
 
-    void addRecipient(Widget* widget);
-    void prependRecipient(Widget* widget);
+    void setRecipient(Widget* widget);
     void removeRecipient(Widget* widget);
 
-    void broadcastToChildren(Widget* widget);
+    bool propagateToChildren() const { return hasFlag(PropagateToChildren); }
+    bool propagateToParent() const { return hasFlag(PropagateToParent); }
+    void setPropagateToChildren(const bool state) { setFlag(PropagateToChildren, state); }
+    void setPropagateToParent(const bool state) { setFlag(PropagateToParent, state); }
+
+    Widget* commonAncestor() { return m_commonAncestor; }
+    void setCommonAncestor(Widget* widget) { m_commonAncestor = widget; }
 
   private:
+    bool hasFlag(const Flags flag) const {
+      return (m_flags & flag) == flag;
+    }
+    void setFlag(const Flags flag, const bool state) {
+      m_flags = (state ? (m_flags | flag):
+                         (m_flags & ~flag));
+    }
+
     MessageType m_type;       // Type of message
-    WidgetsList m_recipients; // List of recipients of the message
-    bool m_used;              // Was used
-    bool m_fromFilter;        // Sent from pre-filter
+    int m_flags;              // Special flags for this message
+    Widget* m_recipient;      // Recipient of this message
+    Widget* m_commonAncestor; // Common ancestor between the Leave <-> Enter messages
     KeyModifiers m_modifiers; // Key modifiers pressed when message was created
+  };
+
+  class FunctionMessage : public Message {
+  public:
+    FunctionMessage(std::function<void()>&& f)
+      : Message(kFunctionMessage),
+        m_f(std::move(f)) { }
+    void call() { m_f(); }
+  private:
+    std::function<void()> m_f;
   };
 
   class KeyMessage : public Message {
@@ -77,18 +102,12 @@ namespace ui {
     int repeat() const { return m_repeat; }
     bool isDeadKey() const { return m_isDead; }
     void setDeadKey(bool state) { m_isDead = state; }
-    bool propagateToChildren() const { return m_propagate_to_children; }
-    bool propagateToParent() const { return m_propagate_to_parent; }
-    void setPropagateToChildren(bool flag) { m_propagate_to_children = flag; }
-    void setPropagateToParent(bool flag) { m_propagate_to_parent = flag; }
 
   private:
     KeyScancode m_scancode;
     int m_unicodeChar;
     int m_repeat; // repeat=0 means the first time the key is pressed
     bool m_isDead;
-    bool m_propagate_to_children;
-    bool m_propagate_to_parent;
   };
 
   class PaintMessage : public Message {

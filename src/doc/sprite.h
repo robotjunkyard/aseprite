@@ -1,5 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2017 David Capello
+// Copyright (c) 2018 Igara Studio S.A.
+// Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -16,14 +17,17 @@
 #include "doc/frame_tags.h"
 #include "doc/image_ref.h"
 #include "doc/image_spec.h"
+#include "doc/layer_list.h"
 #include "doc/object.h"
 #include "doc/pixel_format.h"
 #include "doc/pixel_ratio.h"
 #include "doc/slices.h"
-#include "doc/sprite_position.h"
 #include "gfx/rect.h"
 
 #include <vector>
+
+#define DOC_SPRITE_MAX_WIDTH  65535
+#define DOC_SPRITE_MAX_HEIGHT 65535
 
 namespace doc {
 
@@ -52,11 +56,11 @@ namespace doc {
     ////////////////////////////////////////
     // Constructors/Destructor
 
-    Sprite(PixelFormat format, int width, int height, int ncolors);
-    Sprite(const ImageSpec& spec, int ncolors);
+    Sprite(const ImageSpec& spec, int ncolors = 256);
     virtual ~Sprite();
 
-    static Sprite* createBasicSprite(PixelFormat format, int width, int height, int ncolors);
+    static Sprite* createBasicSprite(const ImageSpec& spec,
+                                     const int ncolors = 256);
 
     ////////////////////////////////////////
     // Main properties
@@ -67,15 +71,21 @@ namespace doc {
     void setDocument(Document* doc) { m_document = doc; }
 
     PixelFormat pixelFormat() const { return (PixelFormat)m_spec.colorMode(); }
+    ColorMode colorMode() const { return m_spec.colorMode(); }
     const PixelRatio& pixelRatio() const { return m_pixelRatio; }
     gfx::Size size() const { return m_spec.size(); }
     gfx::Rect bounds() const { return m_spec.bounds(); }
     int width() const { return m_spec.width(); }
     int height() const { return m_spec.height(); }
+    const gfx::ColorSpacePtr& colorSpace() const { return m_spec.colorSpace(); }
 
     void setPixelFormat(PixelFormat format);
     void setPixelRatio(const PixelRatio& pixelRatio);
     void setSize(int width, int height);
+    void setColorSpace(const gfx::ColorSpacePtr& colorSpace);
+
+    // Returns true if the sprite has a background layer and it's visible
+    bool isOpaque() const;
 
     // Returns true if the rendered images will contain alpha values less
     // than 255. Only RGBA and Grayscale images without background needs
@@ -94,7 +104,9 @@ namespace doc {
     LayerGroup* root() const { return m_root; }
     LayerImage* backgroundLayer() const;
     Layer* firstBrowsableLayer() const;
+    Layer* firstLayer() const;
     layer_t allLayersCount() const;
+    bool hasVisibleReferenceLayers() const;
 
     ////////////////////////////////////////
     // Palettes
@@ -123,6 +135,7 @@ namespace doc {
     void setTotalFrames(frame_t frames);
 
     int frameDuration(frame_t frame) const;
+    int totalAnimationDuration() const;
     void setFrameDuration(frame_t frame, int msecs);
     void setFrameRangeDuration(frame_t from, frame_t to, int msecs);
     void setDurationForAllFrames(int msecs);

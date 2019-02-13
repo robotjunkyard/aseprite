@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (c) 2016 David Capello
+// Copyright (c) 2016, 2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,10 +10,18 @@
 
 #include "doc/selected_layers.h"
 
+#include "base/base.h"
+#include "base/debug.h"
+#include "base/serialization.h"
 #include "doc/layer.h"
 #include "doc/sprite.h"
 
+#include <iostream>
+
 namespace doc {
+
+using namespace base::serialization;
+using namespace base::serialization::little_endian;
 
 void SelectedLayers::clear()
 {
@@ -48,6 +56,26 @@ bool SelectedLayers::hasSameParent() const
       parent = layer->parent();
   }
   return true;
+}
+
+LayerList SelectedLayers::toAllLayersList() const
+{
+  LayerList output;
+
+  if (empty())
+    return output;
+
+  ASSERT(*begin());
+  ASSERT((*begin())->sprite());
+
+  for (Layer* layer = (*begin())->sprite()->firstLayer();
+       layer != nullptr;
+       layer = layer->getNext()) {
+    if (contains(layer))
+      output.push_back(layer);
+  }
+
+  return output;
 }
 
 LayerList SelectedLayers::toLayerList() const
@@ -95,6 +123,15 @@ void SelectedLayers::selectAllLayers(LayerGroup* group)
     if (layer->isGroup())
       selectAllLayers(static_cast<LayerGroup*>(layer));
     insert(layer);
+  }
+}
+
+void SelectedLayers::expandCollapsedGroups()
+{
+  auto copy = m_set;
+  for (Layer* layer : copy) {
+    if (layer->isGroup() && layer->isCollapsed())
+      selectAllLayers(static_cast<LayerGroup*>(layer));
   }
 }
 
@@ -180,6 +217,36 @@ void SelectedLayers::propagateSelection()
 
   for (Layer* layer : newSel)
     insert(layer);
+}
+
+bool SelectedLayers::write(std::ostream& os) const
+{
+  write32(os, size());
+  for (const Layer* layer : *this)
+    write32(os, layer->id());
+  return os.good();
+}
+
+bool SelectedLayers::read(std::istream& is)
+{
+  clear();
+
+  int nlayers = read32(is);
+  for (int i=0; i<nlayers && is; ++i) {
+    ObjectId id = read32(is);
+    Layer* layer = doc::get<Layer>(id);
+
+    // Check that the layer does exist. You will see a little trick in
+    // UndoCommand::onExecute() deserializing the DocumentRange stream
+    // after the undo/redo is executed so layers exist at this point.
+
+    // TODO This should be an assert, but there is a bug that make this fail
+    //ASSERT(layer);
+
+    if (layer)
+      insert(layer);
+  }
+  return is.good();
 }
 
 } // namespace doc

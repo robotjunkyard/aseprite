@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -19,6 +19,7 @@
 #include "app/ui/search_entry.h"
 #include "doc/frame_tag.h"
 #include "doc/sprite.h"
+#include "ui/combobox.h"
 #include "ui/window.h"
 
 #include "goto_frame.xml.h"
@@ -50,7 +51,6 @@ class GotoFirstFrameCommand : public GotoCommand {
 public:
   GotoFirstFrameCommand()
     : GotoCommand(CommandId::GotoFirstFrame()) { }
-  Command* clone() const override { return new GotoFirstFrameCommand(*this); }
 
 protected:
   frame_t onGetFrame(Editor* editor) override {
@@ -58,11 +58,26 @@ protected:
   }
 };
 
+class GotoFirstFrameInTagCommand : public GotoCommand {
+public:
+  GotoFirstFrameInTagCommand()
+    : GotoCommand(CommandId::GotoFirstFrameInTag()) { }
+
+protected:
+  frame_t onGetFrame(Editor* editor) override {
+    frame_t frame = editor->frame();
+    FrameTag* tag = editor
+      ->getCustomizationDelegate()
+      ->getFrameTagProvider()
+      ->getFrameTagByFrame(frame, false);
+    return (tag ? tag->fromFrame(): 0);
+  }
+};
+
 class GotoPreviousFrameCommand : public GotoCommand {
 public:
   GotoPreviousFrameCommand()
     : GotoCommand(CommandId::GotoPreviousFrame()) { }
-  Command* clone() const override { return new GotoPreviousFrameCommand(*this); }
 
 protected:
   frame_t onGetFrame(Editor* editor) override {
@@ -76,7 +91,6 @@ protected:
 class GotoNextFrameCommand : public GotoCommand {
 public:
   GotoNextFrameCommand() : GotoCommand(CommandId::GotoNextFrame()) { }
-  Command* clone() const override { return new GotoNextFrameCommand(*this); }
 
 protected:
   frame_t onGetFrame(Editor* editor) override {
@@ -90,7 +104,6 @@ protected:
 class GotoNextFrameWithSameTagCommand : public GotoCommand {
 public:
   GotoNextFrameWithSameTagCommand() : GotoCommand(CommandId::GotoNextFrameWithSameTag()) { }
-  Command* clone() const override { return new GotoNextFrameWithSameTagCommand(*this); }
 
 protected:
   frame_t onGetFrame(Editor* editor) override {
@@ -98,7 +111,7 @@ protected:
     FrameTag* tag = editor
       ->getCustomizationDelegate()
       ->getFrameTagProvider()
-      ->getFrameTagByFrame(frame);
+      ->getFrameTagByFrame(frame, false);
     frame_t first = (tag ? tag->fromFrame(): 0);
     frame_t last = (tag ? tag->toFrame(): editor->sprite()->lastFrame());
 
@@ -109,7 +122,6 @@ protected:
 class GotoPreviousFrameWithSameTagCommand : public GotoCommand {
 public:
   GotoPreviousFrameWithSameTagCommand() : GotoCommand(CommandId::GotoPreviousFrameWithSameTag()) { }
-  Command* clone() const override { return new GotoPreviousFrameWithSameTagCommand(*this); }
 
 protected:
   frame_t onGetFrame(Editor* editor) override {
@@ -117,7 +129,7 @@ protected:
     FrameTag* tag = editor
       ->getCustomizationDelegate()
       ->getFrameTagProvider()
-      ->getFrameTagByFrame(frame);
+      ->getFrameTagByFrame(frame, false);
     frame_t first = (tag ? tag->fromFrame(): 0);
     frame_t last = (tag ? tag->toFrame(): editor->sprite()->lastFrame());
 
@@ -128,7 +140,6 @@ protected:
 class GotoLastFrameCommand : public GotoCommand {
 public:
   GotoLastFrameCommand() : GotoCommand(CommandId::GotoLastFrame()) { }
-  Command* clone() const override { return new GotoLastFrameCommand(*this); }
 
 protected:
   frame_t onGetFrame(Editor* editor) override {
@@ -136,11 +147,26 @@ protected:
   }
 };
 
+class GotoLastFrameInTagCommand : public GotoCommand {
+public:
+  GotoLastFrameInTagCommand()
+    : GotoCommand(CommandId::GotoLastFrameInTag()) { }
+
+protected:
+  frame_t onGetFrame(Editor* editor) override {
+    frame_t frame = editor->frame();
+    FrameTag* tag = editor
+      ->getCustomizationDelegate()
+      ->getFrameTagProvider()
+      ->getFrameTagByFrame(frame, false);
+    return (tag ? tag->toFrame(): editor->sprite()->lastFrame());
+  }
+};
+
 class GotoFrameCommand : public GotoCommand {
 public:
   GotoFrameCommand() : GotoCommand(CommandId::GotoFrame())
                      , m_showUI(true) { }
-  Command* clone() const override { return new GotoFrameCommand(*this); }
 
 private:
 
@@ -242,6 +268,11 @@ Command* CommandFactory::createGotoFirstFrameCommand()
   return new GotoFirstFrameCommand;
 }
 
+Command* CommandFactory::createGotoFirstFrameInTagCommand()
+{
+  return new GotoFirstFrameInTagCommand;
+}
+
 Command* CommandFactory::createGotoPreviousFrameCommand()
 {
   return new GotoPreviousFrameCommand;
@@ -255,6 +286,11 @@ Command* CommandFactory::createGotoNextFrameCommand()
 Command* CommandFactory::createGotoLastFrameCommand()
 {
   return new GotoLastFrameCommand;
+}
+
+Command* CommandFactory::createGotoLastFrameInTagCommand()
+{
+  return new GotoLastFrameInTagCommand;
 }
 
 Command* CommandFactory::createGotoNextFrameWithSameTagCommand()

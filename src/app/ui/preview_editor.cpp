@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -11,7 +12,7 @@
 #include "app/ui/preview_editor.h"
 
 #include "app/app.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/ini_file.h"
 #include "app/loop_tag.h"
 #include "app/modules/editors.h"
@@ -206,6 +207,13 @@ void PreviewEditorWindow::setPreviewEnabled(bool state)
   updateUsingEditor(current_editor);
 }
 
+void PreviewEditorWindow::pressPlayButton()
+{
+  m_playButton->setSelected(
+    !m_playButton->isSelected());
+  onPlayClicked();
+}
+
 bool PreviewEditorWindow::onProcessMessage(ui::Message* msg)
 {
   switch (msg->type()) {
@@ -224,7 +232,7 @@ bool PreviewEditorWindow::onProcessMessage(ui::Message* msg)
             ui::display_h() - height - StatusBar::instance()->bounds().h - extra,
             width, height));
 
-        load_window_pos(this, "MiniEditor");
+        load_window_pos(this, "MiniEditor", false);
         invalidate();
       }
       break;
@@ -266,7 +274,7 @@ void PreviewEditorWindow::onWindowResize()
 {
   Window::onWindowResize();
 
-  DocumentView* view = UIContext::instance()->activeView();
+  DocView* view = UIContext::instance()->activeView();
   if (view)
     updateUsingEditor(view->editor());
 }
@@ -278,7 +286,7 @@ bool PreviewEditorWindow::hasDocument() const
 
 DocumentPreferences& PreviewEditorWindow::docPref()
 {
-  Document* doc = (m_docView ? m_docView->document(): nullptr);
+  Doc* doc = (m_docView ? m_docView->document(): nullptr);
   return Preferences::instance().document(doc);
 }
 
@@ -304,8 +312,11 @@ void PreviewEditorWindow::onPlayClicked()
     miniEditor->play(Preferences::instance().preview.playOnce(),
                      Preferences::instance().preview.playAll());
   }
-  else
+  else {
     miniEditor->stop();
+    if (m_relatedEditor)
+      miniEditor->setFrame(m_relatedEditor->frame());
+  }
 }
 
 void PreviewEditorWindow::onPopupSpeed()
@@ -323,6 +334,11 @@ void PreviewEditorWindow::onPopupSpeed()
   m_aniSpeed = miniEditor->getAnimationSpeedMultiplier();
 }
 
+Editor* PreviewEditorWindow::previewEditor() const
+{
+  return (m_docView ? m_docView->editor(): nullptr);
+}
+
 void PreviewEditorWindow::updateUsingEditor(Editor* editor)
 {
   if (!m_isEnabled || !editor) {
@@ -336,7 +352,7 @@ void PreviewEditorWindow::updateUsingEditor(Editor* editor)
 
   m_relatedEditor = editor;
 
-  Document* document = editor->document();
+  Doc* document = editor->document();
   Editor* miniEditor = (m_docView ? m_docView->editor(): nullptr);
 
   if (!isVisible())
@@ -350,7 +366,7 @@ void PreviewEditorWindow::updateUsingEditor(Editor* editor)
   if (!miniEditor || miniEditor->document() != document) {
     destroyDocView();
 
-    m_docView = new DocumentView(document, DocumentView::Preview, this);
+    m_docView = new DocView(document, DocView::Preview, this);
     addChild(m_docView);
 
     miniEditor = m_docView->editor();
@@ -384,12 +400,12 @@ void PreviewEditorWindow::updateUsingEditor(Editor* editor)
       doc::FrameTag* tag = editor
         ->getCustomizationDelegate()
         ->getFrameTagProvider()
-        ->getFrameTagByFrame(editor->frame());
+        ->getFrameTagByFrame(editor->frame(), true);
 
       doc::FrameTag* playingTag = editor
         ->getCustomizationDelegate()
         ->getFrameTagProvider()
-        ->getFrameTagByFrame(m_refFrame);
+        ->getFrameTagByFrame(m_refFrame, true);
 
       if (tag == playingTag)
         return;

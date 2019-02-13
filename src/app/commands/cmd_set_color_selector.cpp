@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2016-2017  David Capello
+// Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -20,7 +20,6 @@ namespace app {
 class SetColorSelectorCommand : public Command {
 public:
   SetColorSelectorCommand();
-  Command* clone() const override { return new SetColorSelectorCommand(*this); }
 
 protected:
   bool onNeedsParams() const override { return true; }
@@ -56,6 +55,9 @@ void SetColorSelectorCommand::onLoadParams(const Params& params)
   else if (type == "ryb-wheel") {
     m_type = ColorBar::ColorSelector::RYB_WHEEL;
   }
+  else if (type == "normal-map-wheel") {
+    m_type = ColorBar::ColorSelector::NORMAL_MAP_WHEEL;
+  }
 }
 
 bool SetColorSelectorCommand::onChecked(Context* context)
@@ -84,8 +86,11 @@ std::string SetColorSelectorCommand::onGetFriendlyName() const
     case ColorBar::ColorSelector::RYB_WHEEL:
       type = Strings::commands_SetColorSelector_RYBWheel();
       break;
+    case ColorBar::ColorSelector::NORMAL_MAP_WHEEL:
+      type = Strings::commands_SetColorSelector_NormalMapWheel();
+      break;
   }
-  return fmt::format(getBaseFriendlyName(), type);
+  return fmt::format(getBaseFriendlyName() + ": {0}", type);
 }
 
 Command* CommandFactory::createSetColorSelectorCommand()

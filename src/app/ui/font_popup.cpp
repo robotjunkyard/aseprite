@@ -22,14 +22,16 @@
 #include "base/bind.h"
 #include "base/fs.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
-#include "doc/conversion_she.h"
+#include "doc/conversion_to_surface.h"
 #include "doc/image.h"
 #include "doc/image_ref.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "ui/box.h"
 #include "ui/button.h"
+#include "ui/graphics.h"
+#include "ui/listitem.h"
+#include "ui/paint_event.h"
 #include "ui/size_hint_event.h"
 #include "ui/theme.h"
 #include "ui/view.h"
@@ -67,7 +69,7 @@ private:
 
     if (m_image) {
       Graphics* g = ev.graphics();
-      she::Surface* sur = she::instance()->createRgbaSurface(m_image->width(),
+      os::Surface* sur = os::instance()->createRgbaSurface(m_image->width(),
                                                              m_image->height());
 
       convert_image_to_surface(

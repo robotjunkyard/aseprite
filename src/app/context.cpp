@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -14,7 +15,9 @@
 #include "app/commands/command.h"
 #include "app/commands/commands.h"
 #include "app/console.h"
-#include "app/document.h"
+#include "app/doc.h"
+#include "app/site.h"
+#include "doc/layer.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -22,27 +25,56 @@
 namespace app {
 
 Context::Context()
+  : m_docs(this)
+  , m_lastSelectedDoc(nullptr)
+  , m_transaction(nullptr)
 {
+  m_docs.add_observer(this);
 }
 
-void Context::sendDocumentToTop(doc::Document* document)
+Context::~Context()
+{
+  m_docs.remove_observer(this);
+}
+
+void Context::sendDocumentToTop(Doc* document)
 {
   ASSERT(document != NULL);
 
   documents().move(document, 0);
 }
 
-app::Document* Context::activeDocument() const
+Site Context::activeSite() const
 {
-  return static_cast<app::Document*>(doc::Context::activeDocument());
+  Site site;
+  onGetActiveSite(&site);
+  return site;
+}
+
+Doc* Context::activeDocument() const
+{
+  Site site;
+  onGetActiveSite(&site);
+  return site.document();
+}
+
+void Context::setActiveDocument(Doc* document)
+{
+  onSetActiveDocument(document);
 }
 
 bool Context::hasModifiedDocuments() const
 {
   for (auto doc : documents())
-    if (static_cast<app::Document*>(doc)->isModified())
+    if (doc->isModified())
       return true;
   return false;
+}
+
+void Context::notifyActiveSiteChanged()
+{
+  Site site = activeSite();
+  notify_observers<const Site&>(&ContextObserver::onActiveSiteChange, site);
 }
 
 void Context::executeCommand(const char* commandName)
@@ -59,6 +91,8 @@ void Context::executeCommand(Command* command, const Params& params)
   Console console;
 
   ASSERT(command != NULL);
+  if (command == NULL)
+    return;
 
   LOG(VERBOSE) << "CTXT: Executing command " << command->id() << "\n";
   try {
@@ -113,9 +147,43 @@ void Context::executeCommand(Command* command, const Params& params)
 #endif
 }
 
-void Context::onCreateDocument(doc::CreateDocumentArgs* args)
+void Context::onAddDocument(Doc* doc)
 {
-  args->setDocument(new app::Document(NULL));
+  m_lastSelectedDoc = doc;
+}
+
+void Context::onRemoveDocument(Doc* doc)
+{
+  if (doc == m_lastSelectedDoc)
+    m_lastSelectedDoc = nullptr;
+}
+
+void Context::onGetActiveSite(Site* site) const
+{
+  // Default/dummy site (maybe for batch/command line mode)
+  if (Doc* doc = m_lastSelectedDoc) {
+    site->document(doc);
+    site->sprite(doc->sprite());
+    site->layer(doc->sprite()->root()->firstLayer());
+    site->frame(0);
+  }
+}
+
+void Context::onSetActiveDocument(Doc* doc)
+{
+  m_lastSelectedDoc = doc;
+}
+
+void Context::setTransaction(Transaction* transaction)
+{
+  if (transaction) {
+    ASSERT(!m_transaction);
+    m_transaction = transaction;
+  }
+  else {
+    ASSERT(m_transaction);
+    m_transaction = nullptr;
+  }
 }
 
 } // namespace app

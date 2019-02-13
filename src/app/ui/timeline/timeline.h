@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -8,15 +9,16 @@
 #define APP_UI_TIMELINE_TIMELINE_H_INCLUDED
 #pragma once
 
-#include "app/document_range.h"
+#include "app/doc_observer.h"
+#include "app/docs_observer.h"
+#include "app/doc_range.h"
 #include "app/loop_tag.h"
 #include "app/pref/preferences.h"
 #include "app/ui/editor/editor_observer.h"
 #include "app/ui/input_chain_element.h"
 #include "app/ui/timeline/ani_controls.h"
-#include "doc/document_observer.h"
-#include "doc/documents_observer.h"
 #include "doc/frame.h"
+#include "doc/layer.h"
 #include "doc/selected_frames.h"
 #include "doc/selected_layers.h"
 #include "doc/sprite.h"
@@ -36,6 +38,7 @@ namespace doc {
 
 namespace ui {
   class Graphics;
+  class TooltipManager;
 }
 
 namespace app {
@@ -49,18 +52,19 @@ namespace app {
   class CommandExecutionEvent;
   class ConfigureTimelinePopup;
   class Context;
-  class Document;
+  class Doc;
   class Editor;
 
-  class Timeline : public ui::Widget
-                 , public ui::ScrollableViewDelegate
-                 , public doc::DocumentsObserver
-                 , public doc::DocumentObserver
-                 , public app::EditorObserver
-                 , public app::InputChainElement
-                 , public app::FrameTagProvider {
+  class Timeline : public ui::Widget,
+                   public ui::ScrollableViewDelegate,
+                   public ContextObserver,
+                   public DocsObserver,
+                   public DocObserver,
+                   public EditorObserver,
+                   public InputChainElement,
+                   public FrameTagProvider {
   public:
-    typedef DocumentRange Range;
+    typedef DocRange Range;
 
     enum State {
       STATE_STANDBY,
@@ -71,12 +75,21 @@ namespace app {
       STATE_MOVING_SEPARATOR,
       STATE_MOVING_RANGE,
       STATE_MOVING_ONIONSKIN_RANGE_LEFT,
-      STATE_MOVING_ONIONSKIN_RANGE_RIGHT
+      STATE_MOVING_ONIONSKIN_RANGE_RIGHT,
+      // Changing layers flags states
+      STATE_SHOWING_LAYERS,
+      STATE_HIDING_LAYERS,
+      STATE_LOCKING_LAYERS,
+      STATE_UNLOCKING_LAYERS,
+      STATE_ENABLING_CONTINUOUS_LAYERS,
+      STATE_DISABLING_CONTINUOUS_LAYERS,
+      STATE_EXPANDING_LAYERS,
+      STATE_COLLAPSING_LAYERS,
     };
 
     enum DropOp { kMove, kCopy };
 
-    Timeline();
+    Timeline(ui::TooltipManager* tooltipManager);
     ~Timeline();
 
     void updateUsingEditor(Editor* editor);
@@ -93,7 +106,8 @@ namespace app {
     const SelectedFrames& selectedFrames() const { return m_range.selectedFrames(); }
 
     void prepareToMoveRange();
-    void moveRange(Range& range);
+    void moveRange(const Range& range);
+    void setRange(const Range& range);
 
     void activateClipboardRange();
 
@@ -105,7 +119,8 @@ namespace app {
     // Returns the active frame tag depending on the timeline status
     // E.g. if other frame tags are collapsed, the focused band has
     // priority and tags in other bands are ignored.
-    FrameTag* getFrameTagByFrame(const frame_t frame) override;
+    FrameTag* getFrameTagByFrame(const frame_t frame,
+                                 const bool getLoopTagIfNone) override;
 
     // ScrollableViewDelegate impl
     gfx::Size visibleSize() const override;
@@ -123,22 +138,25 @@ namespace app {
     void onResize(ui::ResizeEvent& ev) override;
     void onPaint(ui::PaintEvent& ev) override;
 
-    // DocumentObserver impl.
-    void onGeneralUpdate(DocumentEvent& ev) override;
-    void onAddLayer(doc::DocumentEvent& ev) override;
-    void onAfterRemoveLayer(doc::DocumentEvent& ev) override;
-    void onAddFrame(doc::DocumentEvent& ev) override;
-    void onRemoveFrame(doc::DocumentEvent& ev) override;
-    void onSelectionChanged(doc::DocumentEvent& ev) override;
-    void onLayerNameChange(doc::DocumentEvent& ev) override;
-    void onAddFrameTag(DocumentEvent& ev) override;
-    void onRemoveFrameTag(DocumentEvent& ev) override;
+    // DocObserver impl.
+    void onGeneralUpdate(DocEvent& ev) override;
+    void onAddLayer(DocEvent& ev) override;
+    void onAfterRemoveLayer(DocEvent& ev) override;
+    void onAddFrame(DocEvent& ev) override;
+    void onRemoveFrame(DocEvent& ev) override;
+    void onSelectionChanged(DocEvent& ev) override;
+    void onLayerNameChange(DocEvent& ev) override;
+    void onAddFrameTag(DocEvent& ev) override;
+    void onRemoveFrameTag(DocEvent& ev) override;
 
     // app::Context slots.
     void onAfterCommandExecution(CommandExecutionEvent& ev);
 
-    // DocumentsObserver impl.
-    void onRemoveDocument(doc::Document* document) override;
+    // ContextObserver impl
+    void onActiveSiteChange(const Site& site) override;
+
+    // DocsObserver impl.
+    void onRemoveDocument(Doc* document) override;
 
     // EditorObserver impl.
     void onStateChanged(Editor* editor) override;
@@ -147,7 +165,8 @@ namespace app {
     void onDestroyEditor(Editor* editor) override;
 
     // InputChainElement impl
-    void onNewInputPriority(InputChainElement* element) override;
+    void onNewInputPriority(InputChainElement* element,
+                            const ui::Message* msg) override;
     bool onCanCut(Context* ctx) override;
     bool onCanCopy(Context* ctx) override;
     bool onCanPaste(Context* ctx) override;
@@ -191,15 +210,16 @@ namespace app {
         FirstChild,
         VeryBottom
       };
-
       DropTarget();
-
+      DropTarget(const DropTarget& o);
+      bool operator!=(const DropTarget& o) const {
+        return (hhit != o.hhit ||
+                vhit != o.vhit ||
+                outside != o.outside);
+      }
       HHit hhit;
       VHit vhit;
-      Layer* layer;
-      ObjectId layerId;
-      frame_t frame;
-      int xpos, ypos;
+      bool outside;
     };
 
     struct Row {
@@ -233,8 +253,8 @@ namespace app {
     bool allLayersDiscontinuous();
     void detachDocument();
     void setCursor(ui::Message* msg, const Hit& hit);
-    void getDrawableLayers(ui::Graphics* g, layer_t* firstLayer, layer_t* lastLayer);
-    void getDrawableFrames(ui::Graphics* g, frame_t* firstFrame, frame_t* lastFrame);
+    void getDrawableLayers(layer_t* firstLayer, layer_t* lastLayer);
+    void getDrawableFrames(frame_t* firstFrame, frame_t* lastFrame);
     void drawPart(ui::Graphics* g, const gfx::Rect& bounds,
                   const std::string* text,
                   ui::Style* style,
@@ -261,7 +281,11 @@ namespace app {
     gfx::Rect getCelsBounds() const;
     gfx::Rect getPartBounds(const Hit& hit) const;
     gfx::Rect getRangeBounds(const Range& range) const;
+    gfx::Rect getRangeClipBounds(const Range& range) const;
     void invalidateHit(const Hit& hit);
+    void invalidateLayer(const Layer* layer);
+    void invalidateFrame(const frame_t frame);
+    void invalidateRange();
     void regenerateRows();
     void regenerateTagBands();
     int visibleTagBands() const;
@@ -279,11 +303,15 @@ namespace app {
     layer_t getLayerIndex(const Layer* layer) const;
     bool isLayerActive(const layer_t layerIdx) const;
     bool isFrameActive(const frame_t frame) const;
+    bool isCelActive(const layer_t layerIdx, const frame_t frame) const;
+    bool isCelLooselyActive(const layer_t layerIdx, const frame_t frame) const;
     void updateStatusBar(ui::Message* msg);
+    void updateStatusBarForFrame(const frame_t frame,
+                                 const FrameTag* frameTag,
+                                 const Cel* cel);
     void updateDropRange(const gfx::Point& pt);
     void clearClipboardRange();
-
-    bool isCopyKeyPressed(ui::Message* msg);
+    void clearAndInvalidateRange();
 
     // The layer of the bottom (e.g. Background layer)
     layer_t firstLayer() const { return 0; }
@@ -319,6 +347,14 @@ namespace app {
                           const bool updatePref);
 
     double zoom() const;
+    int tagFramesDuration(const FrameTag* frameTag) const;
+    // Calculate the duration of the selected range of frames
+    int selectedFramesDuration() const;
+
+    void setLayerVisibleFlag(const layer_t layer, const bool state);
+    void setLayerEditableFlag(const layer_t layer, const bool state);
+    void setLayerContinuousFlag(const layer_t layer, const bool state);
+    void setLayerCollapsedFlag(const layer_t layer, const bool state);
 
     ui::ScrollBar m_hbar;
     ui::ScrollBar m_vbar;
@@ -326,7 +362,7 @@ namespace app {
     double m_zoom;
     Context* m_context;
     Editor* m_editor;
-    Document* m_document;
+    Doc* m_document;
     Sprite* m_sprite;
     Layer* m_layer;
     frame_t m_frame;

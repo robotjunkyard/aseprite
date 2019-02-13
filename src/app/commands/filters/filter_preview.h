@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,7 +10,6 @@
 
 #include "base/mutex.h"
 #include "base/thread.h"
-#include "base/unique_ptr.h"
 #include "ui/timer.h"
 #include "ui/widget.h"
 
@@ -24,6 +23,8 @@ namespace app {
     FilterPreview(FilterManagerImpl* filterMgr);
     ~FilterPreview();
 
+    void setEnablePreview(bool state);
+
     void stop();
     void restartPreview();
 
@@ -36,7 +37,7 @@ namespace app {
     FilterManagerImpl* m_filterMgr;
     ui::Timer m_timer;
     base::mutex m_filterMgrMutex;
-    base::UniquePtr<base::thread> m_filterThread;
+    std::unique_ptr<base::thread> m_filterThread;
     bool m_filterIsDone;
   };
 

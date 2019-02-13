@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (c) 2016 David Capello
+// Copyright (c) 2016-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,6 +10,7 @@
 
 #include "doc/frame_range.h"
 
+#include <iosfwd>
 #include <iterator>
 #include <vector>
 
@@ -20,27 +21,38 @@ namespace doc {
 
   public:
     class const_iterator : public std::iterator<std::forward_iterator_tag, frame_t> {
+      static const int kNullFrame = -2;
     public:
       const_iterator(const Ranges::const_iterator& it)
-        : m_it(it), m_frame(-1) {
+        : m_it(it), m_frame(kNullFrame) {
       }
 
       const_iterator& operator++() {
-        if (m_frame < 0)
+        if (m_frame == kNullFrame)
           m_frame = m_it->fromFrame;
 
-        if (m_frame < m_it->toFrame)
-          ++m_frame;
+        if (m_it->fromFrame <= m_it->toFrame) {
+          if (m_frame < m_it->toFrame)
+            ++m_frame;
+          else {
+            m_frame = kNullFrame;
+            ++m_it;
+          }
+        }
         else {
-          m_frame = -1;
-          ++m_it;
+          if (m_frame > m_it->toFrame)
+            --m_frame;
+          else {
+            m_frame = kNullFrame;
+            ++m_it;
+          }
         }
 
         return *this;
       }
 
       frame_t operator*() const {
-        if (m_frame < 0)
+        if (m_frame == kNullFrame)
           m_frame = m_it->fromFrame;
         return m_frame;
       }
@@ -124,7 +136,7 @@ namespace doc {
     void clear();
     void insert(frame_t frame);
     void insert(frame_t fromFrame, frame_t toFrame);
-    void filter(frame_t fromFrame, frame_t toFrame);
+    SelectedFrames filter(frame_t fromFrame, frame_t toFrame) const;
 
     bool contains(frame_t frame) const;
 
@@ -134,6 +146,9 @@ namespace doc {
     void displace(frame_t frameDelta);
     Reversed reversed() const { return Reversed(*this); }
 
+    SelectedFrames makeReverse() const;
+    SelectedFrames makePingPong() const;
+
     bool operator==(const SelectedFrames& o) const {
       return m_ranges == o.m_ranges;
     }
@@ -141,6 +156,9 @@ namespace doc {
     bool operator!=(const SelectedFrames& o) const {
       return !operator==(o);
     }
+
+    bool write(std::ostream& os) const;
+    bool read(std::istream& is);
 
   private:
     Ranges m_ranges;

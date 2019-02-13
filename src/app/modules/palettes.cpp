@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -44,7 +44,7 @@ void exit_module_palette()
 
 void load_default_palette()
 {
-  base::UniquePtr<Palette> pal;
+  std::unique_ptr<Palette> pal;
   std::string defaultPalName = get_preset_palette_filename(
     get_default_palette_preset_name(), ".ase");
 
@@ -99,9 +99,9 @@ void load_default_palette()
     // If the default palette file doesn't exist, we copy db32.gpl
     // as the default one (default.ase).
     else {
-      std::string path = App::instance()->extensions().palettePath("db32");
+      std::string path = App::instance()->extensions().palettePath("DB32");
       if (path.empty())
-        path = App::instance()->extensions().palettePath("vga-13h");
+        path = App::instance()->extensions().palettePath("VGA 13h");
       if (!path.empty())
         pal.reset(load_palette(path.c_str()));
     }

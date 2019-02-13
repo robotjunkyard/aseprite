@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Aseprite -->
-<!-- Copyright (C) 2001-2017 by David Capello -->
+<!-- Copyright (C) 2018  Igara Studio S.A. -->
+<!-- Copyright (C) 2001-2018  David Capello -->
 <gui version="1.3-dev">
   <!-- Keyboard shortcuts -->
   <keyboard version="1">
@@ -18,7 +19,7 @@
       <key command="ImportSpriteSheet" shortcut="Ctrl+I" mac="Cmd+I" />
       <key command="ExportSpriteSheet" shortcut="Ctrl+E" mac="Cmd+E" />
       <key command="RepeatLastExport" shortcut="Ctrl+Shift+X" mac="Cmd+Shift+X" />
-      <key command="AdvancedMode" shortcut="F" />
+      <key command="AdvancedMode" shortcut="Ctrl+F" />
       <key command="DeveloperConsole" shortcut="F12" />
       <key command="Exit" win="Ctrl+Q" linux="Ctrl+Q" mac="Cmd+Q" />
       <key command="Exit" win="Alt+F4" />
@@ -39,6 +40,8 @@
       <key command="Paste" shortcut="Shift+Ins" />
       <key command="Clear" shortcut="Del" />
       <key command="Clear" shortcut="Backspace" />
+      <key command="Fill" shortcut="F" />
+      <key command="Stroke" shortcut="S" />
       <key command="Flip" shortcut="Shift+H">
         <param name="target" value="mask" />
         <param name="orientation" value="horizontal" />
@@ -63,6 +66,9 @@
       <key command="LayerVisibility" shortcut="Shift+X" />
       <key command="OpenGroup" shortcut="Shift+E" />
       <key command="NewLayer" shortcut="Shift+N" />
+      <key command="NewLayer" shortcut="Shift+Space+N">
+        <param name="before" value="true" />
+      </key>
       <key command="NewLayer" shortcut="Alt+Shift+N">
         <param name="group" value="true" />
       </key>
@@ -95,6 +101,7 @@
       <key command="GotoLastFrame" shortcut="End" />
       <key command="GotoFrame" shortcut="Alt+G" />
       <key command="PlayAnimation" shortcut="Enter" />
+      <key command="PlayPreviewAnimation" shortcut="Shift+Enter" />
       <!-- Cels -->
       <key command="ClearCel" />
       <key command="UnlinkCel" />
@@ -153,12 +160,12 @@
         <param name="target" value="foreground" />
         <param name="change" value="increment-index" />
       </key>
-      <key command="ChangeColor" shortcut="Ctrl+9">
-        <param name="target" value="background" mac="Cmd+9" />
+      <key command="ChangeColor">
+        <param name="target" value="background" />
         <param name="change" value="decrement-index" />
       </key>
-      <key command="ChangeColor" shortcut="Ctrl+0">
-        <param name="target" value="background" mac="Cmd+0" />
+      <key command="ChangeColor">
+        <param name="target" value="background" />
         <param name="change" value="increment-index" />
       </key>
 
@@ -424,6 +431,9 @@
       <key command="SetColorSelector">
         <param name="type" value="ryb-wheel" />
       </key>
+      <key command="SetColorSelector">
+        <param name="type" value="normal-map-wheel" />
+      </key>
       <key command="LoadPalette" />
       <key command="SavePalette" />
       <key command="ColorQuantization" />
@@ -439,6 +449,9 @@
       </key>
       <key command="SelectTile">
         <param name="mode" value="subtract" />
+      </key>
+      <key command="SelectTile">
+        <param name="mode" value="intersect" />
       </key>
       <key command="ChangePixelFormat">
         <param name="format" value="rgb" />
@@ -459,6 +472,12 @@
       </key>
       <key command="ChangeBrush">
         <param name="change" value="decrement-angle" />
+      </key>
+      <key command="SymmetryMode">
+        <param name="orientation" value="vertical" />
+      </key>
+      <key command="SymmetryMode">
+        <param name="orientation" value="horizontal" />
       </key>
     </commands>
 
@@ -529,12 +548,13 @@
       <key action="MaintainAspectRatio" shortcut="Shift" />
 
       <!-- When you scale the selection, pressing this key the
-           selectino will be scaled from the pivot point -->
+           selection will be scaled from the pivot point -->
       <key action="ScaleFromCenter" shortcut="Alt" />
 
       <!-- Modifiers for selection tool -->
       <key action="AddSelection" shortcut="Shift" />
-      <key action="SubtractSelection" shortcut="Shift+Alt" />
+      <key action="SubtractSelection" shortcut="Alt+Shift" />
+      <key action="IntersectSelection" shortcut="Ctrl+Shift" />
 
       <!-- Modifiers for move tool -->
       <key action="AutoSelectLayer" shortcut="Ctrl" mac="Cmd" />
@@ -546,9 +566,9 @@
       <!-- Modifiers for two-points tool controller -->
       <key action="SquareAspect" shortcut="Shift" />
       <key action="DrawFromCenter" shortcut="Ctrl" />
-
       <!-- Modifiers for two-or-more-points tools -->
       <key action="MoveOrigin" shortcut="Space" />
+      <key action="RotateShape" shortcut="Alt" />
 
       <!-- Without default shortcuts -->
       <key action="LeftMouseButton" />
@@ -574,6 +594,10 @@
         <item command="ImportSpriteSheet" text="@.file_import_sprite_sheet" />
         <item command="ExportSpriteSheet" text="@.file_export_sprite_sheet" />
         <item command="RepeatLastExport" text="@.file_repeat_last_export" />
+        <separator id="scripts_menu_separator" />
+        <menu id="scripts_menu" text="@.file_scripts">
+          <item command="OpenScriptFolder" text="@.file_open_script_folder" />
+        </menu>
         <separator />
         <item command="Exit" text="@.file_exit" />
       </menu>
@@ -587,6 +611,9 @@
         <item command="CopyMerged" text="@.edit_copy_merged" />
         <item command="Paste" text="@.edit_paste" />
         <item command="Clear" text="@.edit_clear" />
+        <separator />
+        <item command="Fill" text="@.edit_fill" />
+        <item command="Stroke" text="@.edit_stroke" />
         <separator />
         <menu text="@.edit_rotate">
           <item command="Rotate" text="@.edit_rotate_180">
@@ -657,11 +684,6 @@
           <item command="Despeckle" text="@.edit_fx_despeckle" />
         </menu>
         <item command="PasteText" text="@.edit_insert_text" />
-        <!--menu text="Scripts">
-          <item command="RunScript" text="Transparency from White Background">
-            <param name="filename" value="white_to_alpha.js" />
-          </item>
-        </menu-->
         <separator />
         <item command="KeyboardShortcuts" text="@.edit_keyboard_shortcuts" />
         <item command="Options" text="@.edit_preferences" />
@@ -730,8 +752,11 @@
         <item command="DuplicateLayer" text="@.layer_duplicate" />
         <item command="MergeDownLayer" text="@.layer_merge_down" />
         <item command="FlattenLayers" text="@.layer_flatten" />
+        <item command="FlattenLayers" text="@.layer_flatten_visible">
+          <param name="visibleOnly" value="true" />
+        </item>
         <separator />
-        <item command="NewLayer" text="@.layer_add_reference_layer" >
+        <item command="NewLayer" text="@.layer_add_reference_layer">
           <param name="reference" value="true" />
           <param name="from-file" value="true" />
         </item>
@@ -765,6 +790,9 @@
           <item command="GotoPreviousFrame" text="@.frame_jump_to_previous_frame" />
           <item command="GotoNextFrame" text="@.frame_jump_to_next_frame" />
           <item command="GotoLastFrame" text="@.frame_jump_to_last_frame" />
+          <separator />
+          <item command="GotoFirstFrameInTag" text="@.frame_jump_to_first_frame_in_tag" />
+          <item command="GotoLastFrameInTag" text="@.frame_jump_to_last_frame_in_tag" />
           <separator />
           <item command="GotoFrame" text="@.frame_go_to_frame" />
         </menu>
@@ -873,10 +901,6 @@
           <param name="path" value="http://twitter.com/aseprite" />
         </item>
         <separator />
-        <item command="Launch" text="@.help_donate">
-          <param name="type" value="url" />
-          <param name="path" value="/donate/" />
-        </item>
         <item command="About" text="@.help_about" />
       </menu>
     </menu>
@@ -897,7 +921,7 @@
       <item command="LayerProperties" text="@main_menu.layer_properties" />
       <separator />
       <item command="NewLayer" text="@main_menu.layer_new_layer" />
-      <item command="NewLayer" text="@main_menu.layer_new_group" >
+      <item command="NewLayer" text="@main_menu.layer_new_group">
         <param name="group" value="true" />
       </item>
       <item command="RemoveLayer" text="@main_menu.layer_delete_layer" />
@@ -907,6 +931,9 @@
       <item command="DuplicateLayer" text="@main_menu.layer_duplicate" />
       <item command="MergeDownLayer" text="@main_menu.layer_merge_down" />
       <item command="FlattenLayers" text="@main_menu.layer_flatten" />
+      <item command="FlattenLayers" text="@main_menu.layer_flatten_visible">
+        <param name="visibleOnly" value="true" />
+      </item>
     </menu>
 
     <menu id="frame_popup_menu">
@@ -922,6 +949,8 @@
       <item command="RemoveFrame" text="@main_menu.frame_delete_frame" />
       <separator />
       <item command="SetLoopSection" text="@main_menu.view_set_loop_section" />
+      <separator />
+      <item command="ReverseFrames" text="@main_menu.frame_reverse_frames" />
     </menu>
 
     <menu id="cel_popup_menu">
@@ -983,6 +1012,9 @@
       </item>
       <item command="SetColorSelector" text="@.ryb_color_wheel">
         <param name="type" value="ryb-wheel" />
+      </item>
+      <item command="SetColorSelector" text="@.normal_map_color_wheel">
+        <param name="type" value="normal-map-wheel" />
       </item>
       <separator />
       <item command="LoadPalette" text="@.load_palette" />

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -14,9 +14,9 @@
 #include "app/app_menus.h"
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
+#include "app/i18n/strings.h"
 #include "app/ui/data_recovery_view.h"
 #include "app/ui/main_window.h"
-#include "app/ui/news_listbox.h"
 #include "app/ui/recent_listbox.h"
 #include "app/ui/skin/skin_theme.h"
 #include "app/ui/workspace.h"
@@ -31,6 +31,10 @@
 #include "ui/textbox.h"
 #include "ui/view.h"
 
+#ifdef ENABLE_NEWS
+#include "app/ui/news_listbox.h"
+#endif
+
 namespace app {
 
 using namespace ui;
@@ -39,7 +43,9 @@ using namespace app::skin;
 HomeView::HomeView()
   : m_files(new RecentFilesListBox)
   , m_folders(new RecentFoldersListBox)
+#ifdef ENABLE_NEWS
   , m_news(new NewsListBox)
+#endif
   , m_dataRecovery(nullptr)
   , m_dataRecoveryView(nullptr)
 {
@@ -49,7 +55,9 @@ HomeView::HomeView()
 
   filesView()->attachToView(m_files);
   foldersView()->attachToView(m_folders);
+#ifdef ENABLE_NEWS
   newsView()->attachToView(m_news);
+#endif
 
   checkUpdate()->setVisible(false);
   recoverSpritesPlaceholder()->setVisible(false);
@@ -84,7 +92,7 @@ void HomeView::showDataRecovery(crash::DataRecovery* dataRecovery)
 
 std::string HomeView::getTabText()
 {
-  return "Home";
+  return Strings::home_view_title();
 }
 
 TabIcon HomeView::getTabIcon()
@@ -127,7 +135,11 @@ void HomeView::onResize(ui::ResizeEvent& ev)
 {
   headerPlaceholder()->setVisible(ev.bounds().h > 200*ui::guiscale());
   foldersPlaceholder()->setVisible(ev.bounds().h > 150*ui::guiscale());
+#ifdef ENABLE_NEWS
   newsPlaceholder()->setVisible(ev.bounds().w > 200*ui::guiscale());
+#else
+  newsPlaceholder()->setVisible(false);
+#endif
 
   ui::VBox::onResize(ev);
 }
@@ -136,7 +148,7 @@ void HomeView::onResize(ui::ResizeEvent& ev)
 
 void HomeView::onCheckingUpdates()
 {
-  checkUpdate()->setText("Checking Updates...");
+  checkUpdate()->setText(Strings::home_view_checking_updates());
   checkUpdate()->setVisible(true);
 
   layout();
@@ -144,7 +156,8 @@ void HomeView::onCheckingUpdates()
 
 void HomeView::onUpToDate()
 {
-  checkUpdate()->setText(fmt::format("{0} is up to date", PACKAGE));
+  checkUpdate()->setText(
+    fmt::format(Strings::home_view_is_up_to_date(), PACKAGE));
   checkUpdate()->setVisible(true);
 
   layout();
@@ -152,8 +165,8 @@ void HomeView::onUpToDate()
 
 void HomeView::onNewUpdate(const std::string& url, const std::string& version)
 {
-  checkUpdate()->setText(fmt::format("New {0} v{1} available!",
-                                       PACKAGE, version));
+  checkUpdate()->setText(
+    fmt::format(Strings::home_view_new_version_available(), PACKAGE, version));
   checkUpdate()->setUrl(url);
   checkUpdate()->setVisible(true);
   checkUpdate()->InitTheme.connect(

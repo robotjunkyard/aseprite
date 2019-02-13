@@ -1,5 +1,5 @@
 # Aseprite Document Library
-# Copyright (C) 2001-2017 David Capello
+# Copyright (C) 2001-2018 David Capello
 
 if(WIN32)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
@@ -7,14 +7,17 @@ endif()
 
 add_library(doc-lib
   algo.cpp
+  algorithm/fill_selection.cpp
   algorithm/flip_image.cpp
   algorithm/floodfill.cpp
+  algorithm/modify_selection.cpp
   algorithm/polygon.cpp
   algorithm/resize_image.cpp
   algorithm/rotate.cpp
   algorithm/rotsprite.cpp
   algorithm/shift_image.cpp
   algorithm/shrink_bounds.cpp
+  algorithm/stroke_selection.cpp
   anidir.cpp
   blend_funcs.cpp
   blend_mode.cpp
@@ -26,10 +29,8 @@ add_library(doc-lib
   cel_io.cpp
   cels_range.cpp
   compressed_image.cpp
-  context.cpp
-  conversion_she.cpp
+  conversion_to_surface.cpp
   document.cpp
-  documents.cpp
   file/col_file.cpp
   file/gpl_file.cpp
   file/hex_file.cpp
@@ -41,7 +42,6 @@ add_library(doc-lib
   image.cpp
   image_impl.cpp
   image_io.cpp
-  images_collector.cpp
   layer.cpp
   layer_io.cpp
   layer_list.cpp
@@ -57,7 +57,6 @@ add_library(doc-lib
   rgbmap.cpp
   selected_frames.cpp
   selected_layers.cpp
-  site.cpp
   slice.cpp
   slice_io.cpp
   slices.cpp
@@ -68,10 +67,10 @@ add_library(doc-lib
   subobjects_io.cpp
   user_data_io.cpp)
 
-# TODO Remove 'she' as dependency and move conversion_she.cpp/h files
+# TODO Remove 'os' as dependency and move conversion_to_surface.cpp/h files
 #      to other library/layer (render-lib? new conversion-lib?)
 target_link_libraries(doc-lib
-  she
-  gfx-lib
+  laf-os
+  laf-gfx
   fixmath-lib
   laf-base)

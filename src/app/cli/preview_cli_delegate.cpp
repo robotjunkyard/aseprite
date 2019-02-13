@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,15 +12,15 @@
 #include "app/cli/preview_cli_delegate.h"
 
 #include "app/cli/cli_open_file.h"
-#include "app/document.h"
-#include "app/document_exporter.h"
+#include "app/context.h"
+#include "app/doc.h"
+#include "app/doc_exporter.h"
 #include "app/file/file.h"
-#include "app/ui_context.h"
 #include "base/fs.h"
-#include "base/unique_ptr.h"
 #include "doc/sprite.h"
 
 #include <iostream>
+#include <memory>
 
 namespace app {
 
@@ -78,7 +79,7 @@ void PreviewCliDelegate::afterOpenFile(const CliOpenFile& cof)
   showLayersFilter(cof);
 }
 
-void PreviewCliDelegate::saveFile(const CliOpenFile& cof)
+void PreviewCliDelegate::saveFile(Context* ctx, const CliOpenFile& cof)
 {
   ASSERT(cof.document);
   ASSERT(cof.document->sprite());
@@ -96,6 +97,10 @@ void PreviewCliDelegate::saveFile(const CliOpenFile& cof)
 
   if (cof.trim) {
     std::cout << "  - Trim\n";
+  }
+
+  if (cof.ignoreEmpty) {
+    std::cout << "  - Ignore empty frames\n";
   }
 
   std::cout << "  - Size: "
@@ -131,12 +136,13 @@ void PreviewCliDelegate::saveFile(const CliOpenFile& cof)
   if (!cof.filenameFormat.empty())
     std::cout << "  - Filename format: '" << cof.filenameFormat << "'\n";
 
-  base::UniquePtr<FileOp> fop(
+  std::unique_ptr<FileOp> fop(
     FileOp::createSaveDocumentOperation(
-      UIContext::instance(),
+      ctx,
       cof.roi(),
       cof.filename,
-      cof.filenameFormat));
+      cof.filenameFormat,
+      cof.ignoreEmpty));
 
   if (fop) {
     base::paths files;
@@ -152,7 +158,8 @@ void PreviewCliDelegate::saveFile(const CliOpenFile& cof)
     std::cout << "  - No output\n";
 }
 
-void PreviewCliDelegate::loadPalette(const CliOpenFile& cof,
+void PreviewCliDelegate::loadPalette(Context* ctx,
+                                     const CliOpenFile& cof,
                                      const std::string& filename)
 {
   ASSERT(cof.document);
@@ -163,7 +170,7 @@ void PreviewCliDelegate::loadPalette(const CliOpenFile& cof,
             << "  - Palette: '" << filename << "'\n";
 }
 
-void PreviewCliDelegate::exportFiles(DocumentExporter& exporter)
+void PreviewCliDelegate::exportFiles(Context* ctx, DocExporter& exporter)
 {
   std::string type = "None";
   switch (exporter.spriteSheetType()) {
@@ -187,8 +194,8 @@ void PreviewCliDelegate::exportFiles(DocumentExporter& exporter)
   if (!exporter.dataFilename().empty()) {
     std::string format = "Unknown";
     switch (exporter.dataFormat()) {
-      case DocumentExporter::JsonHashDataFormat: format = "JSON Hash"; break;
-      case DocumentExporter::JsonArrayDataFormat: format = "JSON Array"; break;
+      case DocExporter::JsonHashDataFormat: format = "JSON Hash"; break;
+      case DocExporter::JsonArrayDataFormat: format = "JSON Array"; break;
     }
     std::cout << "  - Save data file: '" << exporter.dataFilename() << "'\n"
               << "  - Data format: " << format << "\n";
@@ -200,10 +207,19 @@ void PreviewCliDelegate::exportFiles(DocumentExporter& exporter)
   }
 }
 
-void PreviewCliDelegate::execScript(const std::string& filename)
+#ifdef ENABLE_SCRIPTING
+void PreviewCliDelegate::execScript(const std::string& filename,
+                                    const Params& params)
 {
   std::cout << "- Run script: '" << filename << "'\n";
+  if (!params.empty()) {
+    std::cout << "  - With app.params = {\n";
+    for (const auto& kv : params)
+      std::cout << "    " << kv.first << "=\"" << kv.second << "\",\n";
+    std::cout << "  }\n";
+  }
 }
+#endif // ENABLE_SCRIPTING
 
 void PreviewCliDelegate::showLayersFilter(const CliOpenFile& cof)
 {

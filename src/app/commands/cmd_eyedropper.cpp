@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -16,13 +16,13 @@
 #include "app/commands/params.h"
 #include "app/modules/editors.h"
 #include "app/pref/preferences.h"
+#include "app/site.h"
 #include "app/tools/tool.h"
 #include "app/tools/tool_box.h"
 #include "app/ui/color_bar.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui_context.h"
 #include "doc/image.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 #include "ui/manager.h"
 #include "ui/system.h"
@@ -37,7 +37,7 @@ EyedropperCommand::EyedropperCommand()
   m_background = false;
 }
 
-void EyedropperCommand::pickSample(const doc::Site& site,
+void EyedropperCommand::pickSample(const Site& site,
                                    const gfx::PointF& pixelPos,
                                    const render::Projection& proj,
                                    app::Color& color)
@@ -183,11 +183,22 @@ void EyedropperCommand::onLoadParams(const Params& params)
 
 void EyedropperCommand::onExecute(Context* context)
 {
-  Widget* widget = ui::Manager::getDefault()->getMouse();
+  gfx::Point mousePos = ui::get_mouse_position();
+  Widget* widget = ui::Manager::getDefault()->pick(mousePos);
   if (!widget || widget->type() != editor_type())
     return;
 
   Editor* editor = static_cast<Editor*>(widget);
+  executeOnMousePos(context, editor, mousePos, !m_background);
+}
+
+void EyedropperCommand::executeOnMousePos(Context* context,
+                                          Editor* editor,
+                                          const gfx::Point& mousePos,
+                                          const bool foreground)
+{
+  ASSERT(editor);
+
   Sprite* sprite = editor->sprite();
   if (!sprite)
     return;
@@ -199,24 +210,24 @@ void EyedropperCommand::onExecute(Context* context)
   }
 
   // Pixel position to get
-  gfx::PointF pixelPos = editor->screenToEditorF(ui::get_mouse_position());
+  gfx::PointF pixelPos = editor->screenToEditorF(mousePos);
 
   // Start with fg/bg color
   DisableColorBarEditMode disable;
   Preferences& pref = Preferences::instance();
   app::Color color =
-    m_background ? pref.colorBar.bgColor():
-                   pref.colorBar.fgColor();
+    foreground ? pref.colorBar.fgColor():
+                 pref.colorBar.bgColor();
 
   pickSample(editor->getSite(),
              pixelPos,
              editor->projection(),
              color);
 
-  if (m_background)
-    pref.colorBar.bgColor(color);
-  else
+  if (foreground)
     pref.colorBar.fgColor(color);
+  else
+    pref.colorBar.bgColor(color);
 }
 
 Command* CommandFactory::createEyedropperCommand()

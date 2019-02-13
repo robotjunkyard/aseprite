@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -24,10 +24,12 @@
 #include "app/transaction.h"
 #include "app/ui/dithering_selector.h"
 #include "app/ui/editor/editor.h"
+#include "app/ui/editor/editor_render.h"
 #include "app/ui/skin/skin_theme.h"
 #include "base/bind.h"
 #include "base/thread.h"
 #include "doc/image.h"
+#include "doc/layer.h"
 #include "doc/sprite.h"
 #include "fmt/format.h"
 #include "render/dithering_algorithm.h"
@@ -323,7 +325,7 @@ private:
   Editor* m_editor;
   doc::ImageRef m_image;
   doc::ImageBufferPtr m_imageBuffer;
-  base::UniquePtr<ConvertThread> m_bgThread;
+  std::unique_ptr<ConvertThread> m_bgThread;
   ConversionItem* m_selectedItem;
   DitheringSelector* m_ditheringSelector;
 };
@@ -333,7 +335,6 @@ private:
 class ChangePixelFormatCommand : public Command {
 public:
   ChangePixelFormatCommand();
-  Command* clone() const override { return new ChangePixelFormatCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -438,6 +439,7 @@ void ChangePixelFormatCommand::onExecute(Context* context)
 {
   bool flatten = false;
 
+#ifdef ENABLE_UI
   if (m_useUI) {
     ColorModeWindow window(current_editor);
 
@@ -456,6 +458,7 @@ void ChangePixelFormatCommand::onExecute(Context* context)
     m_ditheringMatrix = window.ditheringMatrix();
     flatten = window.flattenEnabled();
   }
+#endif // ENABLE_UI
 
   // No conversion needed
   if (context->activeDocument()->sprite()->pixelFormat() == m_format)
@@ -468,10 +471,14 @@ void ChangePixelFormatCommand::onExecute(Context* context)
       [this, &job, flatten] {
         Sprite* sprite(job.sprite());
 
-        if (flatten)
-          job.transaction().execute(new cmd::FlattenLayers(sprite));
+        if (flatten) {
+          SelectedLayers selLayers;
+          for (auto layer : sprite->root()->layers())
+            selLayers.insert(layer);
+          job.tx()(new cmd::FlattenLayers(sprite, selLayers));
+        }
 
-        job.transaction().execute(
+        job.tx()(
           new cmd::SetPixelFormat(
             sprite, m_format,
             m_ditheringAlgorithm,

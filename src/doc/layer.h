@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2017 David Capello
+// Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -38,6 +38,10 @@ namespace doc {
     Continuous = 16,            // Prefer to link cels when the user copy them
     Collapsed  = 32,            // Prefer to show this group layer collapsed
     Reference  = 64,            // Is a reference layer
+
+    PersistentFlagsMask = 0xffff,
+
+    Internal_WasVisible = 0x10000, // Was visible in the alternative state (Alt+click)
 
     BackgroundLayerFlags = LockMove | Background,
   };
@@ -195,6 +199,7 @@ namespace doc {
 
     void allLayers(LayerList& list) const;
     layer_t allLayersCount() const;
+    bool hasVisibleReferenceLayers() const;
     void allVisibleLayers(LayerList& list) const;
     void allVisibleReferenceLayers(LayerList& list) const;
     void allBrowsableLayers(LayerList& list) const;

@@ -1,5 +1,6 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -12,13 +13,15 @@
 
 #include "base/thread.h"
 #include "gfx/point.h"
-#include "she/display.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/display.h"
+#include "os/surface.h"
+#include "os/system.h"
+#include "ui/clipboard_delegate.h"
 #include "ui/cursor.h"
 #include "ui/intern.h"
 #include "ui/intern.h"
 #include "ui/manager.h"
+#include "ui/message.h"
 #include "ui/overlay.h"
 #include "ui/overlay_manager.h"
 #include "ui/scale.h"
@@ -36,7 +39,7 @@ base::thread::native_handle_type main_gui_thread;
 static CursorType mouse_cursor_type = kOutsideDisplay;
 static const Cursor* mouse_cursor_custom = nullptr;
 static const Cursor* mouse_cursor = nullptr;
-static she::Display* mouse_display = nullptr;
+static os::Display* mouse_display = nullptr;
 static Overlay* mouse_cursor_overlay = nullptr;
 static bool use_native_mouse_cursor = true;
 static bool support_native_custom_cursor = false;
@@ -80,22 +83,21 @@ static bool update_custom_native_cursor(const Cursor* cursor)
   bool result = false;
 
   // Check if we can use a custom native mouse in this platform
-  if (!use_native_mouse_cursor &&
-      support_native_custom_cursor &&
+  if (support_native_custom_cursor &&
       mouse_display) {
     if (cursor) {
       result = mouse_display->setNativeMouseCursor(
         // The surface is already scaled by guiscale()
         cursor->getSurface(),
         cursor->getFocus(),
-        // We scale the cursor by the she::Display scale
+        // We scale the cursor by the os::Display scale
         mouse_display->scale() * mouse_cursor_scale);
     }
     else if (mouse_cursor_type == kOutsideDisplay) {
-      result = mouse_display->setNativeMouseCursor(she::kArrowCursor);
+      result = mouse_display->setNativeMouseCursor(os::kArrowCursor);
     }
     else {
-      result = mouse_display->setNativeMouseCursor(she::kNoCursor);
+      result = mouse_display->setNativeMouseCursor(os::kNoCursor);
     }
   }
 
@@ -104,43 +106,43 @@ static bool update_custom_native_cursor(const Cursor* cursor)
 
 static void update_mouse_cursor()
 {
-  she::NativeCursor nativeCursor = she::kNoCursor;
+  os::NativeCursor nativeCursor = os::kNoCursor;
   const Cursor* cursor = nullptr;
 
   if (use_native_mouse_cursor ||
       mouse_cursor_type == kOutsideDisplay) {
     switch (mouse_cursor_type) {
       case ui::kOutsideDisplay:
-        nativeCursor = she::kArrowCursor;
+        nativeCursor = os::kArrowCursor;
         break;
       case ui::kNoCursor: break;
       case ui::kArrowCursor:
       case ui::kArrowPlusCursor:
-        nativeCursor = she::kArrowCursor;
+        nativeCursor = os::kArrowCursor;
         break;
       case ui::kCrosshairCursor:
-        nativeCursor = she::kCrosshairCursor;
+        nativeCursor = os::kCrosshairCursor;
         break;
       case ui::kForbiddenCursor:
-        nativeCursor = she::kForbiddenCursor;
+        nativeCursor = os::kForbiddenCursor;
         break;
       case ui::kHandCursor:
-        nativeCursor = she::kLinkCursor;
+        nativeCursor = os::kLinkCursor;
         break;
       case ui::kScrollCursor:
       case ui::kMoveCursor:
-        nativeCursor = she::kMoveCursor;
+        nativeCursor = os::kMoveCursor;
         break;
-      case ui::kSizeNSCursor: nativeCursor = she::kSizeNSCursor; break;
-      case ui::kSizeWECursor: nativeCursor = she::kSizeWECursor; break;
-      case ui::kSizeNCursor: nativeCursor = she::kSizeNCursor; break;
-      case ui::kSizeNECursor: nativeCursor = she::kSizeNECursor; break;
-      case ui::kSizeECursor: nativeCursor = she::kSizeECursor; break;
-      case ui::kSizeSECursor: nativeCursor = she::kSizeSECursor; break;
-      case ui::kSizeSCursor: nativeCursor = she::kSizeSCursor; break;
-      case ui::kSizeSWCursor: nativeCursor = she::kSizeSWCursor; break;
-      case ui::kSizeWCursor: nativeCursor = she::kSizeWCursor; break;
-      case ui::kSizeNWCursor: nativeCursor = she::kSizeNWCursor; break;
+      case ui::kSizeNSCursor: nativeCursor = os::kSizeNSCursor; break;
+      case ui::kSizeWECursor: nativeCursor = os::kSizeWECursor; break;
+      case ui::kSizeNCursor: nativeCursor = os::kSizeNCursor; break;
+      case ui::kSizeNECursor: nativeCursor = os::kSizeNECursor; break;
+      case ui::kSizeECursor: nativeCursor = os::kSizeECursor; break;
+      case ui::kSizeSECursor: nativeCursor = os::kSizeSECursor; break;
+      case ui::kSizeSCursor: nativeCursor = os::kSizeSCursor; break;
+      case ui::kSizeSWCursor: nativeCursor = os::kSizeSWCursor; break;
+      case ui::kSizeWCursor: nativeCursor = os::kSizeWCursor; break;
+      case ui::kSizeNWCursor: nativeCursor = os::kSizeNWCursor; break;
     }
   }
 
@@ -152,11 +154,11 @@ static void update_mouse_cursor()
     // so we can should use the internal overlay (even when we
     // have use_native_mouse_cursor flag enabled).
     if (!ok)
-      nativeCursor = she::kNoCursor;
+      nativeCursor = os::kNoCursor;
   }
 
   // Use a custom cursor
-  if (nativeCursor == she::kNoCursor &&
+  if (nativeCursor == os::kNoCursor &&
       mouse_cursor_type != ui::kOutsideDisplay) {
     if (get_theme() && mouse_cursor_type != ui::kCustomCursor)
       cursor = get_theme()->getStandardCursor(mouse_cursor_type);
@@ -165,20 +167,33 @@ static void update_mouse_cursor()
   }
 
   // Try to use a custom native cursor if it's possible
-  if (!update_custom_native_cursor(cursor)) {
+  if (nativeCursor == os::kNoCursor &&
+      !update_custom_native_cursor(cursor)) {
     // Or an overlay as last resource
     update_mouse_overlay(cursor);
   }
 }
 
-UISystem::UISystem()
+static UISystem* g_instance = nullptr;
+
+// static
+UISystem* UISystem::instance()
 {
+  return g_instance;
+}
+
+UISystem::UISystem()
+  : m_clipboardDelegate(nullptr)
+{
+  ASSERT(!g_instance);
+  g_instance = this;
+
   main_gui_thread = base::this_thread::native_handle();
   mouse_cursor_type = kOutsideDisplay;
   support_native_custom_cursor =
-    ((she::instance() &&
-      (int(she::instance()->capabilities()) &
-       int(she::Capabilities::CustomNativeMouseCursor))) ?
+    ((os::instance() &&
+      (int(os::instance()->capabilities()) &
+       int(os::Capabilities::CustomNativeMouseCursor))) ?
      true: false);
 
   details::initWidgets();
@@ -196,9 +211,12 @@ UISystem::~UISystem()
   _internal_set_mouse_display(nullptr);
   if (!update_custom_native_cursor(nullptr))
     update_mouse_overlay(nullptr);
+
+  ASSERT(g_instance == this);
+  g_instance = nullptr;
 }
 
-void _internal_set_mouse_display(she::Display* display)
+void _internal_set_mouse_display(os::Display* display)
 {
   CursorType cursor = get_mouse_cursor();
   set_mouse_cursor(kNoCursor);
@@ -221,6 +239,24 @@ int display_h()
     return mouse_display->height() / mouse_display->scale();
   else
     return 1;
+}
+
+void set_clipboard_text(const std::string& text)
+{
+  ASSERT(g_instance);
+  ClipboardDelegate* delegate = g_instance->clipboardDelegate();
+  if (delegate)
+    delegate->setClipboardText(text);
+}
+
+bool get_clipboard_text(std::string& text)
+{
+  ASSERT(g_instance);
+  ClipboardDelegate* delegate = g_instance->clipboardDelegate();
+  if (delegate)
+    return delegate->getClipboardText(text);
+  else
+    return false;
 }
 
 void update_cursor_overlay()
@@ -310,6 +346,18 @@ void set_mouse_position(const gfx::Point& newPos)
     mouse_display->setMousePosition(newPos);
 
   _internal_set_mouse_position(newPos);
+}
+
+void execute_from_ui_thread(std::function<void()>&& f)
+{
+  ASSERT(Manager::getDefault());
+
+  Manager* man = Manager::getDefault();
+  ASSERT(man);
+
+  FunctionMessage* msg = new FunctionMessage(std::move(f));
+  msg->setRecipient(man);
+  man->enqueueMessage(msg);
 }
 
 bool is_ui_thread()

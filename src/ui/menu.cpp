@@ -1,5 +1,6 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -11,11 +12,12 @@
 #include "ui/menu.h"
 
 #include "gfx/size.h"
-#include "she/font.h"
+#include "os/font.h"
 #include "ui/intern.h"
 #include "ui/ui.h"
 
 #include <cctype>
+#include <memory>
 
 static const int kTimeoutToOpenSubmenu = 250;
 
@@ -87,32 +89,6 @@ struct MenuBaseData {
 
 };
 
-class CustomizedWindowForMenuBox : public Window
-{
-public:
-  CustomizedWindowForMenuBox(MenuBox* menubox)
-    : Window(WithoutTitleBar, "")
-  {
-    setMoveable(false); // Can't move the window
-    addChild(menubox);
-    remapWindow();
-  }
-
-protected:
-  bool onProcessMessage(Message* msg) override
-  {
-    switch (msg->type()) {
-
-      case kCloseMessage:
-        // Delete this window automatically
-        deferDelete();
-        break;
-
-    }
-    return Window::onProcessMessage(msg);
-  }
-};
-
 static MenuBox* get_base_menubox(Widget* widget);
 static MenuBaseData* get_base(Widget* widget);
 
@@ -128,6 +104,7 @@ Menu::Menu()
   : Widget(kMenuWidget)
   , m_menuitem(NULL)
 {
+  enableFlags(IGNORE_MOUSE);
   initTheme();
 }
 
@@ -277,7 +254,7 @@ void Menu::showPopup(const gfx::Point& pos)
   }
 
   // New window and new menu-box
-  base::UniquePtr<Window> window(new Window(Window::WithoutTitleBar));
+  std::unique_ptr<Window> window(new Window(Window::WithoutTitleBar));
   MenuBox* menubox = new MenuBox();
   MenuBaseData* base = menubox->createBase();
   base->was_clicked = true;
@@ -296,19 +273,40 @@ void Menu::showPopup(const gfx::Point& pos)
     MID(0, pos.y, ui::display_h() - window->bounds().h));
 
   // Set the focus to the new menubox
-  Manager::getDefault()->setFocus(menubox);
+  Manager* manager = Manager::getDefault();
+  manager->setFocus(menubox);
   menubox->setFocusMagnet(true);
 
   // Open the window
   window->openWindowInForeground();
 
-  // Free the keyboard focus
-  Manager::getDefault()->freeFocus();
+  // Free the keyboard focus if it's in the menu popup, in other case
+  // it means that the user set the focus to other specific widget
+  // before we closed the popup.
+  Widget* focus = manager->getFocus();
+  if (focus && focus->window() == window.get())
+    focus->releaseFocus();
 
   // Fetch the "menu" so it isn't destroyed
   menubox->setMenu(nullptr);
   menubox->stopFilteringMouseDown();
 
+}
+
+Widget* Menu::findItemById(const char* id)
+{
+  Widget* result = findChild(id);
+  if (result)
+    return result;
+  for (auto child : children()) {
+    if (child->type() == kMenuItemWidget) {
+      result = static_cast<MenuItem*>(child)
+        ->getSubmenu()->findItemById(id);
+      if (result)
+        return result;
+    }
+  }
+  return nullptr;
 }
 
 void Menu::onPaint(PaintEvent& ev)
@@ -742,7 +740,7 @@ bool MenuItem::onProcessMessage(Message* msg)
         menubox->setMenu(m_submenu);
 
         // New window and new menu-box
-        Window* window = new CustomizedWindowForMenuBox(menubox);
+        Window* window = new MenuBoxWindow(menubox);
 
         // Menubox position
         Rect pos = window->bounds();
@@ -842,7 +840,7 @@ bool MenuItem::onProcessMessage(Message* msg)
           manager()->setFocus(this->parent()->parent());
 
         // Do not call "delete window" here, because it
-        // (CustomizedWindowForMenuBox) will be deferDelete()d on
+        // (MenuBoxWindow) will be deferDelete() on
         // kCloseMessage.
 
         if (last_of_close_chain) {
@@ -1063,7 +1061,7 @@ void MenuItem::openSubmenu(bool select_first)
   }
 
   msg = new OpenMenuItemMessage(select_first);
-  msg->addRecipient(this);
+  msg->setRecipient(this);
   Manager::getDefault()->enqueueMessage(msg);
 
   // Get the 'base'
@@ -1106,7 +1104,7 @@ void MenuItem::closeSubmenu(bool last_of_close_chain)
 
   // Second: now we can close the 'menuitem'
   msg = new CloseMenuItemMessage(last_of_close_chain);
-  msg->addRecipient(this);
+  msg->setRecipient(this);
   Manager::getDefault()->enqueueMessage(msg);
 
   // If this is the last message of the chain, here we have the
@@ -1185,7 +1183,7 @@ void Menu::closeAll()
 void MenuBox::closePopup()
 {
   Message* msg = new Message(kClosePopupMessage);
-  msg->addRecipient(this);
+  msg->setRecipient(this);
   Manager::getDefault()->enqueueMessage(msg);
 }
 
@@ -1227,7 +1225,7 @@ void MenuItem::executeClick()
 {
   // Send the message
   Message* msg = new Message(kExecuteMenuItemMessage);
-  msg->addRecipient(this);
+  msg->setRecipient(this);
   Manager::getDefault()->enqueueMessage(msg);
 }
 
@@ -1299,6 +1297,30 @@ static MenuItem* find_previtem(Menu* menu, MenuItem* menuitem)
     return find_previtem(menu, NULL);
   else
     return NULL;
+}
+
+//////////////////////////////////////////////////////////////////////
+// MenuBoxWindow
+
+MenuBoxWindow::MenuBoxWindow(MenuBox* menubox)
+  : Window(WithoutTitleBar, "")
+{
+  setMoveable(false); // Can't move the window
+  addChild(menubox);
+  remapWindow();
+}
+
+bool MenuBoxWindow::onProcessMessage(Message* msg)
+{
+  switch (msg->type()) {
+
+    case kCloseMessage:
+      // Delete this window automatically
+      deferDelete();
+      break;
+
+  }
+  return Window::onProcessMessage(msg);
 }
 
 } // namespace ui

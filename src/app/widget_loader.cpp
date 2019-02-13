@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -7,6 +7,8 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+#include "app/ui/pref_widget.h"
 
 #include "app/widget_loader.h"
 
@@ -17,6 +19,7 @@
 #include "app/ui/button_set.h"
 #include "app/ui/color_button.h"
 #include "app/ui/drop_down_button.h"
+#include "app/ui/expr_entry.h"
 #include "app/ui/icon_button.h"
 #include "app/ui/search_entry.h"
 #include "app/ui/skin/skin_theme.h"
@@ -27,7 +30,7 @@
 #include "base/exception.h"
 #include "base/fs.h"
 #include "base/memory.h"
-#include "she/system.h"
+#include "os/system.h"
 #include "ui/ui.h"
 
 #include "tinyxml.h"
@@ -184,15 +187,29 @@ Widget* WidgetLoader::convertXmlElementToWidget(const TiXmlElement* elem, Widget
     }
   }
   else if (elem_name == "check") {
-    const char *looklike = elem->Attribute("looklike");
+    const char* looklike = elem->Attribute("looklike");
+    const char* pref = elem->Attribute("pref");
+
+    ASSERT(!widget || !pref);   // widget && pref is not supported
 
     if (looklike != NULL && strcmp(looklike, "button") == 0) {
+      ASSERT(!pref);             // not supported yet
+
       if (!widget)
         widget = new CheckBox("", kButtonWidget);
     }
     else {
-      if (!widget)
-        widget = new CheckBox("");
+      if (!widget) {
+        // Automatic bind <check> widget with bool preference option
+        if (pref) {
+          auto prefWidget = new BoolPrefWidget<CheckBox>("");
+          prefWidget->setPref(pref);
+          widget = prefWidget;
+        }
+        else {
+          widget = new CheckBox("");
+        }
+      }
     }
 
     bool center = bool_attr_is_true(elem, "center");
@@ -213,23 +230,28 @@ Widget* WidgetLoader::convertXmlElementToWidget(const TiXmlElement* elem, Widget
     if (editable)
       ((ComboBox*)widget)->setEditable(true);
   }
-  else if (elem_name == "entry") {
+  else if (elem_name == "entry" ||
+           elem_name == "expr") {
     const char* maxsize = elem->Attribute("maxsize");
-    const char* suffix = elem->Attribute("suffix");
-
-    if (maxsize != NULL) {
-      bool readonly = bool_attr_is_true(elem, "readonly");
-
-      widget = new Entry(strtol(maxsize, NULL, 10), "");
-
-      if (readonly)
-        ((Entry*)widget)->setReadOnly(true);
-
-      if (suffix)
-        ((Entry*)widget)->setSuffix(suffix);
-    }
-    else
+    if (elem_name == "entry" && !maxsize)
       throw std::runtime_error("<entry> element found without 'maxsize' attribute");
+
+    const char* suffix = elem->Attribute("suffix");
+    const char* decimals = elem->Attribute("decimals");
+    const bool readonly = bool_attr_is_true(elem, "readonly");
+
+    widget = (elem_name == "expr" ?
+              new ExprEntry:
+              new Entry(strtol(maxsize, nullptr, 10), ""));
+
+    if (readonly)
+      ((Entry*)widget)->setReadOnly(true);
+
+    if (suffix)
+      ((Entry*)widget)->setSuffix(suffix);
+
+    if (elem_name == "expr" && decimals)
+      ((ExprEntry*)widget)->setDecimals(strtol(decimals, nullptr, 10));
   }
   else if (elem_name == "grid") {
     const char *columns = elem->Attribute("columns");
@@ -472,7 +494,7 @@ Widget* WidgetLoader::convertXmlElementToWidget(const TiXmlElement* elem, Widget
         throw base::Exception("File %s not found", file);
 
       try {
-        she::Surface* sur = she::instance()->loadRgbaSurface(rf.filename().c_str());
+        os::Surface* sur = os::instance()->loadRgbaSurface(rf.filename().c_str());
         widget = new ImageView(sur, 0, true);
       }
       catch (...) {

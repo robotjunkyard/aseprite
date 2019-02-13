@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,17 +11,16 @@
 
 #include "app/commands/command.h"
 #include "app/context_access.h"
-#include "app/document_api.h"
+#include "app/doc_api.h"
 #include "app/modules/editors.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/button_set.h"
 #include "app/ui/color_bar.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/select_box_state.h"
 #include "app/ui/skin/skin_theme.h"
 #include "base/bind.h"
-#include "base/unique_ptr.h"
 #include "doc/image.h"
 #include "doc/mask.h"
 #include "doc/sprite.h"
@@ -269,21 +269,30 @@ private:
 };
 
 class CanvasSizeCommand : public Command {
-  int m_left, m_right, m_top, m_bottom;
-
 public:
   CanvasSizeCommand();
-  Command* clone() const override { return new CanvasSizeCommand(*this); }
 
 protected:
+  void onLoadParams(const Params& params) override;
   bool onEnabled(Context* context) override;
   void onExecute(Context* context) override;
+
+private:
+  int m_left, m_right, m_top, m_bottom;
 };
 
 CanvasSizeCommand::CanvasSizeCommand()
   : Command(CommandId::CanvasSize(), CmdRecordableFlag)
 {
   m_left = m_right = m_top = m_bottom = 0;
+}
+
+void CanvasSizeCommand::onLoadParams(const Params& params)
+{
+  m_left = params.get_as<int>("left");
+  m_right = params.get_as<int>("right");
+  m_top = params.get_as<int>("top");
+  m_bottom = params.get_as<int>("bottom");
 }
 
 bool CanvasSizeCommand::onEnabled(Context* context)
@@ -297,17 +306,18 @@ void CanvasSizeCommand::onExecute(Context* context)
   const ContextReader reader(context);
   const Sprite* sprite(reader.sprite());
 
+#ifdef ENABLE_UI
   if (context->isUIAvailable()) {
     // load the window widget
-    base::UniquePtr<CanvasSizeWindow> window(new CanvasSizeWindow());
+    std::unique_ptr<CanvasSizeWindow> window(new CanvasSizeWindow());
 
     window->remapWindow();
     window->centerWindow();
 
-    load_window_pos(window, "CanvasSize");
+    load_window_pos(window.get(), "CanvasSize");
     window->setVisible(true);
     window->openWindowInForeground();
-    save_window_pos(window, "CanvasSize");
+    save_window_pos(window.get(), "CanvasSize");
 
     if (!window->pressedOk())
       return;
@@ -317,6 +327,7 @@ void CanvasSizeCommand::onExecute(Context* context)
     m_top    = window->getTop();
     m_bottom = window->getBottom();
   }
+#endif
 
   // Resize canvas
 
@@ -330,16 +341,23 @@ void CanvasSizeCommand::onExecute(Context* context)
 
   {
     ContextWriter writer(reader);
-    Document* document = writer.document();
+    Doc* doc = writer.document();
     Sprite* sprite = writer.sprite();
-    Transaction transaction(writer.context(), "Canvas Size");
-    DocumentApi api = document->getApi(transaction);
+    Tx tx(writer.context(), "Canvas Size");
+    DocApi api = doc->getApi(tx);
 
-    api.cropSprite(sprite, gfx::Rect(x1, y1, x2-x1, y2-y1));
-    transaction.commit();
+    api.cropSprite(sprite,
+                   gfx::Rect(x1, y1,
+                             MID(1, x2-x1, DOC_SPRITE_MAX_WIDTH),
+                             MID(1, y2-y1, DOC_SPRITE_MAX_HEIGHT)));
+    tx.commit();
 
-    document->generateMaskBoundaries();
-    update_screen_for_document(document);
+    doc->generateMaskBoundaries();
+
+#ifdef ENABLE_UI
+    if (context->isUIAvailable())
+      update_screen_for_document(doc);
+#endif
   }
 }
 

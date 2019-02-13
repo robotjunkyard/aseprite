@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -19,7 +19,7 @@
 #include "app/console.h"
 #include "app/context.h"
 #include "app/context_access.h"
-#include "app/document_undo.h"
+#include "app/doc_undo.h"
 #include "app/i18n/strings.h"
 #include "app/modules/gui.h"
 #include "app/modules/palettes.h"
@@ -37,6 +37,7 @@
 #include "app/ui/context_bar.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/main_window.h"
+#include "app/ui/optional_alert.h"
 #include "app/ui/status_bar.h"
 #include "app/util/expand_cel_canvas.h"
 #include "doc/brush.h"
@@ -68,7 +69,7 @@ protected:
   tools::Tool* m_tool;
   BrushRef m_brush;
   gfx::Point m_oldPatternOrigin;
-  Document* m_document;
+  Doc* m_document;
   Sprite* m_sprite;
   Layer* m_layer;
   frame_t m_frame;
@@ -81,13 +82,13 @@ protected:
   gfx::Point m_celOrigin;
   gfx::Point m_speed;
   tools::ToolLoop::Button m_button;
-  base::UniquePtr<tools::Ink> m_ink;
+  std::unique_ptr<tools::Ink> m_ink;
   tools::Controller* m_controller;
   tools::PointShape* m_pointShape;
   tools::Intertwine* m_intertwine;
   tools::TracePolicy m_tracePolicy;
-  base::UniquePtr<tools::Symmetry> m_symmetry;
-  base::UniquePtr<doc::Remap> m_shadingRemap;
+  std::unique_ptr<tools::Symmetry> m_symmetry;
+  std::unique_ptr<doc::Remap> m_shadingRemap;
   app::ColorTarget m_colorTarget;
   doc::color_t m_fgColor;
   doc::color_t m_bgColor;
@@ -101,7 +102,7 @@ public:
                tools::Tool* tool,
                tools::Ink* ink,
                tools::Controller* controller,
-               Document* document,
+               Doc* document,
                tools::ToolLoop::Button button,
                const app::Color& fgColor,
                const app::Color& bgColor)
@@ -201,7 +202,7 @@ public:
   // IToolLoop interface
   tools::Tool* getTool() override { return m_tool; }
   Brush* getBrush() override { return m_brush.get(); }
-  Document* getDocument() override { return m_document; }
+  Doc* getDocument() override { return m_document; }
   Sprite* sprite() override { return m_sprite; }
   Layer* getLayer() override { return m_layer; }
   frame_t getFrame() override { return m_frame; }
@@ -246,7 +247,7 @@ public:
   gfx::Point getCelOrigin() override { return m_celOrigin; }
   void setSpeed(const gfx::Point& speed) override { m_speed = speed; }
   gfx::Point getSpeed() override { return m_speed; }
-  tools::Ink* getInk() override { return m_ink; }
+  tools::Ink* getInk() override { return m_ink.get(); }
   tools::Controller* getController() override { return m_controller; }
   tools::PointShape* getPointShape() override { return m_pointShape; }
   tools::Intertwine* getIntertwine() override { return m_intertwine; }
@@ -257,7 +258,7 @@ public:
       return m_tracePolicy;
   }
   tools::Symmetry* getSymmetry() override { return m_symmetry.get(); }
-  doc::Remap* getShadingRemap() override { return m_shadingRemap; }
+  doc::Remap* getShadingRemap() override { return m_shadingRemap.get(); }
 
   gfx::Region& getDirtyArea() override {
     return m_dirtyArea;
@@ -318,7 +319,7 @@ public:
                tools::Tool* tool,
                tools::Ink* ink,
                tools::Controller* controller,
-               Document* document,
+               Doc* document,
                tools::ToolLoop::Button button,
                const app::Color& fgColor,
                const app::Color& bgColor,
@@ -456,7 +457,7 @@ public:
           ContextWriter writer(reader, 500);
           m_expandCelCanvas->commit();
         }
-        catch (const LockedDocumentException& ex) {
+        catch (const LockedDocException& ex) {
           Console::showException(ex);
         }
       }
@@ -466,7 +467,8 @@ public:
         redraw = true;
 
         // Show selection edges
-        m_docPref.show.selectionEdges(true);
+        if (Preferences::instance().selection.autoShowSelectionEdges())
+          m_docPref.show.selectionEdges(true);
       }
       // Slice ink
       else if (getInk()->isSlice()) {
@@ -486,7 +488,7 @@ public:
         ContextWriter writer(reader, 500);
         m_expandCelCanvas->rollback();
       }
-      catch (const LockedDocumentException& ex) {
+      catch (const LockedDocException& ex) {
         Console::showException(ex);
       }
     }
@@ -598,8 +600,12 @@ tools::ToolLoop* create_tool_loop(
   app::Color bg = colorbar->getBgColor();
 
   if (!fg.isValid() || !bg.isValid()) {
-    Alert::show(Strings::alerts_invalid_fg_or_bg_colors());
-    return NULL;
+    if (Preferences::instance().colorBar.showInvalidFgBgColorAlert()) {
+      OptionalAlert::show(
+        Preferences::instance().colorBar.showInvalidFgBgColorAlert,
+        1, Strings::alerts_invalid_fg_or_bg_colors());
+      return nullptr;
+    }
   }
 
   // Create the new tool loop
@@ -646,7 +652,7 @@ public:
     Editor* editor,
     tools::Tool* tool,
     tools::Ink* ink,
-    Document* document,
+    Doc* document,
     const app::Color& fgColor,
     const app::Color& bgColor,
     Image* image,

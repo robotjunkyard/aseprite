@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019 Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,6 +12,7 @@
 #include "config.h"
 #endif
 
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file/file_format.h"
 #include "app/file/format_options.h"
@@ -289,7 +291,8 @@ bool TgaFormat::onLoad(FileOp* fop)
            (bpp != 24) && (bpp != 32))) {
         return false;
       }
-
+      if ((descriptor_bits & 0xf) == 8)
+        fop->sequenceSetHasAlpha(true);
       pixelFormat = IMAGE_RGB;
       break;
 
@@ -397,7 +400,7 @@ bool TgaFormat::onSave(FileOp* fop)
   int depth = (image->pixelFormat() == IMAGE_RGB) ? 32 : 8;
   bool need_pal = (image->pixelFormat() == IMAGE_INDEXED)? true: false;
 
-  FileHandle handle(open_file_with_exception(fop->filename(), "wb"));
+  FileHandle handle(open_file_with_exception_sync_on_close(fop->filename(), "wb"));
   FILE* f = handle.get();
 
   fputc(0, f);                          /* id length (no id saved) */
@@ -416,7 +419,7 @@ bool TgaFormat::onSave(FileOp* fop)
   fputc(depth, f);                     /* bits per pixel */
 
   /* descriptor (bottom to top, 8-bit alpha) */
-  fputc(image->pixelFormat() == IMAGE_RGB ? 8: 0, f);
+  fputc(image->pixelFormat() == IMAGE_RGB && !fop->document()->sprite()->isOpaque()? 8: 0, f);
 
   if (need_pal) {
     for (y=0; y<256; y++) {
@@ -462,6 +465,9 @@ bool TgaFormat::onSave(FileOp* fop)
       }
       break;
   }
+
+  const char* tga2_footer = "\0\0\0\0\0\0\0\0TRUEVISION-XFILE.\0";
+  fwrite(tga2_footer, 1, 26, f);
 
   if (ferror(f)) {
     fop->setError("Error writing file.\n");

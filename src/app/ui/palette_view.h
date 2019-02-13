@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -82,7 +83,7 @@ namespace app {
     void pasteFromClipboard();
     void discardClipboardSelection();
 
-    obs::signal<void()> FocusEnter;
+    obs::signal<void(ui::Message*)> FocusOrClick;
 
   protected:
     bool onProcessMessage(ui::Message* msg) override;
@@ -152,7 +153,8 @@ namespace app {
     int m_rangeAnchor;
     doc::PalettePicks m_selectedEntries;
     bool m_isUpdatingColumns;
-    obs::scoped_connection m_conn;
+    obs::scoped_connection m_palConn;
+    obs::scoped_connection m_csConn;
     Hit m_hot;
     bool m_copy;
   };

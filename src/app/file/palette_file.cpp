@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,12 +10,13 @@
 #endif
 
 #include "app/context.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file/file_format.h"
 #include "app/file/file_formats_manager.h"
 #include "base/fs.h"
 #include "base/string.h"
+#include "dio/detect_format.h"
 #include "doc/cel.h"
 #include "doc/file/col_file.h"
 #include "doc/file/gpl_file.h"
@@ -24,7 +26,6 @@
 #include "doc/layer.h"
 #include "doc/palette.h"
 #include "doc/sprite.h"
-#include "dio/detect_format.h"
 
 #include <cstring>
 
@@ -78,7 +79,7 @@ Palette* load_palette(const char* filename)
       if (!ff || !ff->support(FILE_SUPPORT_LOAD))
         break;
 
-      base::UniquePtr<FileOp> fop(
+      std::unique_ptr<FileOp> fop(
         FileOp::createLoadDocumentOperation(
           nullptr, filename,
           FILE_LOAD_SEQUENCE_NONE |
@@ -139,10 +140,12 @@ bool save_palette(const char* filename, const Palette* pal, int columns)
       int w = (columns > 0 ? MID(0, columns, pal->size()): pal->size());
       int h = (pal->size() / w) + (pal->size() % w > 0 ? 1: 0);
 
-      app::Context tmpContext;
-      doc::Document* doc = tmpContext.documents().add(
-        w, h, (pal->size() <= 256 ? doc::ColorMode::INDEXED:
-                                    doc::ColorMode::RGB), pal->size());
+      Context tmpContext;
+      Doc* doc = tmpContext.documents().add(
+        new Doc(Sprite::createBasicSprite(
+                  ImageSpec((pal->size() <= 256 ? doc::ColorMode::INDEXED:
+                                                  doc::ColorMode::RGB),
+                            w, h), pal->size())));
 
       Sprite* sprite = doc->sprite();
       doc->sprite()->setPalette(pal, false);

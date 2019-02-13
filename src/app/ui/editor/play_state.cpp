@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -64,7 +64,7 @@ void PlayState::onEnterState(Editor* editor)
     m_tag = m_editor
       ->getCustomizationDelegate()
       ->getFrameTagProvider()
-      ->getFrameTagByFrame(m_refFrame);
+      ->getFrameTagByFrame(m_refFrame, true);
 
   // Go to the first frame of the animation or active frame tag
   if (m_playOnce) {
@@ -110,7 +110,7 @@ bool PlayState::onMouseDown(Editor* editor, MouseMessage* msg)
 
   // When an editor is clicked the current view is changed.
   UIContext* context = UIContext::instance();
-  context->setActiveView(editor->getDocumentView());
+  context->setActiveView(editor->getDocView());
 
   // A click with right-button stops the animation
   if (msg->buttons() == kButtonRight) {
@@ -167,6 +167,12 @@ bool PlayState::onSetCursor(Editor* editor, const gfx::Point& mouseScreenPos)
   return true;
 }
 
+void PlayState::onRemoveFrameTag(Editor* editor, doc::FrameTag* tag)
+{
+  if (m_tag == tag)
+    m_tag = nullptr;
+}
+
 void PlayState::onPlaybackTick()
 {
   ASSERT(m_playTimer.isRunning());
@@ -212,7 +218,6 @@ void PlayState::onPlaybackTick()
 
     m_editor->setFrame(frame);
     m_nextFrameTime += getNextFrameTime();
-    m_editor->invalidate();
   }
 
   m_curFrameTick = base::current_tick();
@@ -240,7 +245,8 @@ void PlayState::onBeforeCommandExecution(CommandExecutionEvent& ev)
   // (zoom, scroll, etc.)
   if (ev.command()->id() == CommandId::PlayAnimation() ||
       ev.command()->id() == CommandId::Zoom() ||
-      ev.command()->id() == CommandId::Scroll()) {
+      ev.command()->id() == CommandId::Scroll() ||
+      ev.command()->id() == CommandId::Timeline()) {
     return;
   }
 

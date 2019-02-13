@@ -1,5 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2016 David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,8 +11,6 @@
 
 #include "doc/sprites.h"
 
-#include "base/mutex.h"
-#include "base/unique_ptr.h"
 #include "doc/sprite.h"
 #include "doc/cel.h"
 #include "doc/image.h"
@@ -19,6 +18,7 @@
 #include "doc/primitives.h"
 
 #include <algorithm>
+#include <memory>
 
 namespace doc {
 
@@ -33,17 +33,6 @@ Sprites::~Sprites()
   deleteAll();
 }
 
-Sprite* Sprites::add(int width, int height, ColorMode mode, int ncolors)
-{
-  base::UniquePtr<Sprite> spr(
-    doc::Sprite::createBasicSprite(
-      (doc::PixelFormat)mode, width, height, ncolors));
-
-  add(spr);
-
-  return spr.release();
-}
-
 Sprite* Sprites::add(Sprite* spr)
 {
   ASSERT(spr != NULL);
@@ -51,7 +40,6 @@ Sprite* Sprites::add(Sprite* spr)
   m_sprites.insert(begin(), spr);
   spr->setDocument(m_doc);
 
-  notify_observers(&SpritesObserver::onAddSprite, spr);
   return spr;
 }
 

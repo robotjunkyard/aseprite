@@ -1,32 +1,33 @@
 // Aseprite
+// Copyright (C) 2018  David Capello
 // Copyright (C) 2016  Carlo Caputo
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
 
 #include "app/color_utils.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/pref/preferences.h"
 #include "app/thumbnails.h"
 #include "doc/algorithm/resize_image.h"
 #include "doc/cel.h"
-#include "doc/conversion_she.h"
+#include "doc/conversion_to_surface.h"
 #include "doc/doc.h"
 #include "doc/frame.h"
 #include "doc/object.h"
 #include "doc/object_id.h"
 #include "render/render.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/surface.h"
+#include "os/system.h"
 
 namespace app {
 namespace thumb {
 
-she::Surface* get_cel_thumbnail(const doc::Cel* cel,
+os::Surface* get_cel_thumbnail(const doc::Cel* cel,
                                 const gfx::Size& thumb_size,
                                 gfx::Rect cel_image_on_thumb)
 {
-  app::Document* document = static_cast<app::Document*>(cel->sprite()->document());
+  Doc* document = static_cast<Doc*>(cel->sprite()->document());
   doc::frame_t frame = cel->frame();
   doc::Image* image = cel->image();
 
@@ -51,7 +52,7 @@ she::Surface* get_cel_thumbnail(const doc::Cel* cel,
 
   const doc::Sprite* sprite = document->sprite();
   // TODO doc::Image::createCopy() from pre-rendered checkered background
-  base::UniquePtr<doc::Image> thumb_img(doc::Image::create(
+  std::unique_ptr<doc::Image> thumb_img(doc::Image::create(
                                           image->pixelFormat(), thumb_size.w, thumb_size.h));
 
   int block_size = MID(4, thumb_size.w/8, 16);
@@ -63,7 +64,7 @@ she::Surface* get_cel_thumbnail(const doc::Cel* cel,
     }
   }
 
-  base::UniquePtr<doc::Image> scale_img;
+  std::unique_ptr<doc::Image> scale_img;
   const doc::Image* source = image;
 
   if (cel_image_on_thumb.w != image_size.w || cel_image_on_thumb.h != image_size.h) {
@@ -71,7 +72,7 @@ she::Surface* get_cel_thumbnail(const doc::Cel* cel,
                       image->pixelFormat(), cel_image_on_thumb.w, cel_image_on_thumb.h));
 
     doc::algorithm::resize_image(
-      image, scale_img,
+      image, scale_img.get(),
       doc::algorithm::ResizeMethod::RESIZE_METHOD_NEAREST_NEIGHBOR,
       sprite->palette(frame),
       sprite->rgbMap(frame),
@@ -81,16 +82,16 @@ she::Surface* get_cel_thumbnail(const doc::Cel* cel,
   }
 
   render::composite_image(
-    thumb_img, source,
+    thumb_img.get(), source,
     sprite->palette(frame),
     cel_image_on_thumb.x,
     cel_image_on_thumb.y,
     255, BlendMode::NORMAL);
 
-  she::Surface* thumb_surf = she::instance()->createRgbaSurface(
+  os::Surface* thumb_surf = os::instance()->createRgbaSurface(
     thumb_img->width(), thumb_img->height());
 
-  convert_image_to_surface(thumb_img, sprite->palette(frame), thumb_surf,
+  convert_image_to_surface(thumb_img.get(), sprite->palette(frame), thumb_surf,
                            0, 0, 0, 0, thumb_img->width(), thumb_img->height());
 
   return thumb_surf;

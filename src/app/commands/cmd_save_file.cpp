@@ -16,7 +16,11 @@
 #include "app/commands/params.h"
 #include "app/console.h"
 #include "app/context_access.h"
+#include "app/doc.h"
+#include "app/doc_undo.h"
 #include "app/file/file.h"
+#include "app/file/gif_format.h"
+#include "app/file/png_format.h"
 #include "app/file_selector.h"
 #include "app/i18n/strings.h"
 #include "app/job.h"
@@ -24,82 +28,22 @@
 #include "app/pref/preferences.h"
 #include "app/recent_files.h"
 #include "app/restore_visible_layers.h"
+#include "app/ui/export_file_window.h"
 #include "app/ui/layer_frame_comboboxes.h"
+#include "app/ui/optional_alert.h"
 #include "app/ui/status_bar.h"
 #include "base/bind.h"
 #include "base/convert_to.h"
 #include "base/fs.h"
+#include "base/scoped_value.h"
 #include "base/thread.h"
-#include "base/unique_ptr.h"
 #include "doc/frame_tag.h"
 #include "doc/sprite.h"
+#include "fmt/format.h"
 #include "ui/ui.h"
+#include "undo/undo_state.h"
 
 namespace app {
-
-class SaveAsCopyDelegate : public FileSelectorDelegate {
-public:
-  SaveAsCopyDelegate(const Sprite* sprite,
-                     const double scale,
-                     const std::string& layer,
-                     const std::string& frame,
-                     const bool applyPixelRatio)
-    : m_sprite(sprite),
-      m_resizeScale(scale),
-      m_layer(layer),
-      m_frame(frame),
-      m_applyPixelRatio(applyPixelRatio) { }
-
-  bool hasResizeCombobox() override {
-    return true;
-  }
-
-  double getResizeScale() override {
-    return m_resizeScale;
-  }
-
-  void setResizeScale(double scale) override {
-    m_resizeScale = scale;
-  }
-
-  void fillLayersComboBox(ui::ComboBox* layers) override {
-    fill_layers_combobox(m_sprite, layers, m_layer);
-  }
-
-  void fillFramesComboBox(ui::ComboBox* frames) override {
-    fill_frames_combobox(m_sprite, frames, m_frame);
-  }
-
-  std::string getLayers() override { return m_layer; }
-  std::string getFrames() override { return m_frame; }
-
-  void setLayers(const std::string& layer) override {
-    m_layer = layer;
-  }
-
-  void setFrames(const std::string& frame) override {
-    m_frame = frame;
-  }
-
-  void setApplyPixelRatio(bool applyPixelRatio) override {
-    m_applyPixelRatio = applyPixelRatio;
-  }
-
-  bool applyPixelRatio() const override {
-    return m_applyPixelRatio;
-  }
-
-  doc::PixelRatio pixelRatio() override {
-    return m_sprite->pixelRatio();
-  }
-
-private:
-  const Sprite* m_sprite;
-  double m_resizeScale;
-  std::string m_layer;
-  std::string m_frame;
-  bool m_applyPixelRatio;
-};
 
 class SaveFileJob : public Job, public IFileOpProgress {
 public:
@@ -144,6 +88,8 @@ private:
 SaveFileBaseCommand::SaveFileBaseCommand(const char* id, CommandFlags flags)
   : Command(id, flags)
 {
+  m_useUI = true;
+  m_ignoreEmpty = false;
 }
 
 void SaveFileBaseCommand::onLoadParams(const Params& params)
@@ -151,6 +97,7 @@ void SaveFileBaseCommand::onLoadParams(const Params& params)
   m_filename = params.get("filename");
   m_filenameFormat = params.get("filename-format");
   m_frameTag = params.get("frame-tag");
+  m_aniDir = params.get("ani-dir");
   m_slice = params.get("slice");
 
   if (params.has_param("from-frame") ||
@@ -164,6 +111,12 @@ void SaveFileBaseCommand::onLoadParams(const Params& params)
     m_selFrames.clear();
     m_adjustFramesByFrameTag = false;
   }
+
+  std::string useUI = params.get("useUI");
+  m_useUI = (useUI.empty() || (useUI == "true"));
+
+  std::string ignoreEmpty = params.get("ignoreEmpty");
+  m_ignoreEmpty = (ignoreEmpty == "true");
 }
 
 // Returns true if there is a current sprite to save.
@@ -173,36 +126,33 @@ bool SaveFileBaseCommand::onEnabled(Context* context)
   return context->checkFlags(ContextFlags::ActiveDocumentIsWritable);
 }
 
-bool SaveFileBaseCommand::saveAsDialog(
+std::string SaveFileBaseCommand::saveAsDialog(
   Context* context,
   const std::string& dlgTitle,
-  const std::string& forbiddenFilename,
-  FileSelectorDelegate* delegate)
+  const std::string& initialFilename,
+  const bool markAsSaved,
+  const bool saveInBackground,
+  const std::string& forbiddenFilename)
 {
-  const Document* document = context->activeDocument();
+  Doc* document = context->activeDocument();
   std::string filename;
-
-  // If there is a delegate, we're doing a "Save Copy As/Export", so we don't
-  // have to mark the file as saved.
-  const bool isExport = (delegate != nullptr);
-  const bool markAsSaved = (!isExport);
-  double xscale = 1.0;
-  double yscale = 1.0;
 
   if (!m_filename.empty()) {
     filename = m_filename;
   }
   else {
     base::paths exts = get_writable_extensions();
-    filename = document->filename();
+    filename = initialFilename;
 
+#ifdef ENABLE_UI
   again:;
     base::paths newfilename;
-    if (!app::show_file_selector(
+    if (!m_useUI ||
+        !app::show_file_selector(
           dlgTitle, filename, exts,
-          FileSelectorType::Save, newfilename,
-          delegate))
-      return false;
+          FileSelectorType::Save,
+          newfilename))
+      return std::string();
 
     filename = newfilename.front();
     if (!forbiddenFilename.empty() &&
@@ -211,115 +161,49 @@ bool SaveFileBaseCommand::saveAsDialog(
       ui::Alert::show(Strings::alerts_cannot_file_overwrite_on_export());
       goto again;
     }
-
-    if (delegate &&
-        delegate->hasResizeCombobox()) {
-      xscale = yscale = delegate->getResizeScale();
-    }
+#endif // ENABLE_UI
   }
 
-  std::string oldFilename;
-  {
-    ContextWriter writer(context);
-    Document* documentWriter = writer.document();
-    oldFilename = documentWriter->filename();
-
-    // Change the document file name
-    documentWriter->setFilename(filename.c_str());
-    m_selectedFilename = filename;
+  if (saveInBackground) {
+    saveDocumentInBackground(
+      context, document,
+      filename, markAsSaved);
   }
 
-  // Pixel ratio
-  if (delegate &&
-      delegate->applyPixelRatio()) {
-    doc::PixelRatio pr = delegate->pixelRatio();
-    xscale *= pr.w;
-    yscale *= pr.h;
-  }
-
-  // Apply scale
-  bool undoResize = false;
-  if (xscale != 1.0 || yscale != 1.0) {
-    Command* resizeCmd = Commands::instance()->byId(CommandId::SpriteSize());
-    ASSERT(resizeCmd);
-    if (resizeCmd) {
-      int width = document->sprite()->width();
-      int height = document->sprite()->height();
-      int newWidth = int(double(width) * xscale);
-      int newHeight = int(double(height) * yscale);
-      if (newWidth < 1) newWidth = 1;
-      if (newHeight < 1) newHeight = 1;
-      if (width != newWidth || height != newHeight) {
-        Params params;
-        params.set("use-ui", "false");
-        params.set("width", base::convert_to<std::string>(newWidth).c_str());
-        params.set("height", base::convert_to<std::string>(newHeight).c_str());
-        params.set("resize-method", "nearest-neighbor"); // TODO add algorithm in the UI?
-        context->executeCommand(resizeCmd, params);
-        undoResize = true;
-      }
-    }
-  }
-
-  {
-    RestoreVisibleLayers layersVisibility;
-    if (delegate) {
-      Site site = context->activeSite();
-
-      // Selected layers to export
-      calculate_visible_layers(site,
-                               delegate->getLayers(),
-                               layersVisibility);
-
-      // Selected frames to export
-      SelectedFrames selFrames;
-      FrameTag* frameTag = calculate_selected_frames(
-        site, delegate->getFrames(), selFrames);
-      if (frameTag)
-        m_frameTag = frameTag->name();
-      m_selFrames = selFrames;
-      m_adjustFramesByFrameTag = false;
-    }
-
-    // Save the document
-    saveDocumentInBackground(context, const_cast<Document*>(document), markAsSaved);
-  }
-
-  // Undo resize
-  if (undoResize) {
-    Command* undoCmd = Commands::instance()->byId(CommandId::Undo());
-    if (undoCmd)
-      context->executeCommand(undoCmd);
-  }
-
-  {
-    ContextWriter writer(context);
-    Document* documentWriter = writer.document();
-
-    if (document->isModified())
-      documentWriter->setFilename(oldFilename);
-    else
-      documentWriter->incrementVersion();
-  }
-
-  return true;
+  return filename;
 }
 
-void SaveFileBaseCommand::saveDocumentInBackground(const Context* context,
-                                                   const app::Document* document,
-                                                   bool markAsSaved) const
+void SaveFileBaseCommand::saveDocumentInBackground(
+  const Context* context,
+  Doc* document,
+  const std::string& filename,
+  const bool markAsSaved)
 {
-  base::UniquePtr<FileOp> fop(
+  if (!m_aniDir.empty()) {
+    switch (convert_string_to_anidir(m_aniDir)) {
+      case AniDir::REVERSE:
+        m_selFrames = m_selFrames.makeReverse();
+        break;
+      case AniDir::PING_PONG:
+        m_selFrames = m_selFrames.makePingPong();
+        break;
+    }
+  }
+
+  FileOpROI roi(document, m_slice, m_frameTag,
+                m_selFrames, m_adjustFramesByFrameTag);
+
+  std::unique_ptr<FileOp> fop(
     FileOp::createSaveDocumentOperation(
       context,
-      FileOpROI(document, m_slice, m_frameTag,
-                m_selFrames, m_adjustFramesByFrameTag),
-      document->filename(),
-      m_filenameFormat));
+      roi,
+      filename,
+      m_filenameFormat,
+      m_ignoreEmpty));
   if (!fop)
     return;
 
-  SaveFileJob job(fop);
+  SaveFileJob job(fop.get());
   job.showProgressWindow();
 
   if (fop->hasError()) {
@@ -328,20 +212,24 @@ void SaveFileBaseCommand::saveDocumentInBackground(const Context* context,
 
     // We don't know if the file was saved correctly or not. So mark
     // it as it should be saved again.
-    const_cast<Document*>(document)->impossibleToBackToSavedState();
+    document->impossibleToBackToSavedState();
   }
   // If the job was cancelled, mark the document as modified.
   else if (fop->isStop()) {
-    const_cast<Document*>(document)->impossibleToBackToSavedState();
+    document->impossibleToBackToSavedState();
   }
   else if (context->isUIAvailable()) {
-    App::instance()->recentFiles()->addRecentFile(document->filename().c_str());
-    if (markAsSaved)
-      const_cast<Document*>(document)->markAsSaved();
-
+    App::instance()->recentFiles()->addRecentFile(filename);
+    if (markAsSaved) {
+      document->markAsSaved();
+      document->setFilename(filename);
+      document->incrementVersion();
+    }
+#ifdef ENABLE_UI
     StatusBar::instance()
-      ->setStatusText(2000, "File %s, saved.",
-        document->name().c_str());
+      ->setStatusText(2000, "File <%s> saved.",
+        base::get_file_name(filename).c_str());
+#endif
   }
 }
 
@@ -350,7 +238,6 @@ void SaveFileBaseCommand::saveDocumentInBackground(const Context* context,
 class SaveFileCommand : public SaveFileBaseCommand {
 public:
   SaveFileCommand();
-  Command* clone() const override { return new SaveFileCommand(*this); }
 
 protected:
   void onExecute(Context* context) override;
@@ -365,28 +252,30 @@ SaveFileCommand::SaveFileCommand()
 // [main thread]
 void SaveFileCommand::onExecute(Context* context)
 {
-  Document* document = context->activeDocument();
+  Doc* document = context->activeDocument();
 
   // If the document is associated to a file in the file-system, we can
   // save it directly without user interaction.
   if (document->isAssociatedToFile()) {
     const ContextReader reader(context);
-    const Document* documentReader = reader.document();
+    const Doc* documentReader = reader.document();
 
-    saveDocumentInBackground(context, documentReader, true);
+    saveDocumentInBackground(
+      context, document,
+      documentReader->filename(), true);
   }
   // If the document isn't associated to a file, we must to show the
   // save-as dialog to the user to select for first time the file-name
   // for this document.
   else {
-    saveAsDialog(context, "Save File");
+    saveAsDialog(context, "Save File",
+                 document->filename(), true);
   }
 }
 
 class SaveFileAsCommand : public SaveFileBaseCommand {
 public:
   SaveFileAsCommand();
-  Command* clone() const override { return new SaveFileAsCommand(*this); }
 
 protected:
   void onExecute(Context* context) override;
@@ -399,16 +288,21 @@ SaveFileAsCommand::SaveFileAsCommand()
 
 void SaveFileAsCommand::onExecute(Context* context)
 {
-  saveAsDialog(context, "Save As");
+  Doc* document = context->activeDocument();
+  saveAsDialog(context, "Save As",
+               document->filename(), true);
 }
 
 class SaveFileCopyAsCommand : public SaveFileBaseCommand {
 public:
   SaveFileCopyAsCommand();
-  Command* clone() const override { return new SaveFileCopyAsCommand(*this); }
 
 protected:
   void onExecute(Context* context) override;
+
+private:
+  void moveToUndoState(Doc* doc,
+                       const undo::UndoState* state);
 };
 
 SaveFileCopyAsCommand::SaveFileCopyAsCommand()
@@ -418,46 +312,152 @@ SaveFileCopyAsCommand::SaveFileCopyAsCommand()
 
 void SaveFileCopyAsCommand::onExecute(Context* context)
 {
-  const Document* document = context->activeDocument();
-  std::string oldFilename = document->filename();
+  Doc* doc = context->activeDocument();
+  std::string outputFilename = m_filename;
+  std::string layers = kAllLayers;
+  std::string frames = kAllFrames;
+  double xscale = 1.0;
+  double yscale = 1.0;
+  bool applyPixelRatio = false;
+  doc::AniDir aniDirValue = convert_string_to_anidir(m_aniDir);
+  bool isForTwitter = false;
 
-  // show "Save As" dialog
-  DocumentPreferences& docPref = Preferences::instance().document(document);
+#if ENABLE_UI
+  if (m_useUI && context->isUIAvailable()) {
+    ExportFileWindow win(doc);
+    bool askOverwrite = true;
 
-  base::UniquePtr<SaveAsCopyDelegate> delegate;
-  if (context->isUIAvailable()) {
-    delegate.reset(
-      new SaveAsCopyDelegate(
-        document->sprite(),
-        docPref.saveCopy.resizeScale(),
-        docPref.saveCopy.layer(),
-        docPref.saveCopy.frameTag(),
-        docPref.saveCopy.applyPixelRatio()));
+    win.SelectOutputFile.connect(
+      [this, &win, &askOverwrite, context, doc]() -> std::string {
+        std::string result =
+          saveAsDialog(
+            context, "Export",
+            win.outputFilenameValue(), false, false,
+            (doc->isAssociatedToFile() ? doc->filename():
+                                         std::string()));
+        if (!result.empty())
+          askOverwrite = false; // Already asked in the file selector dialog
+
+        return result;
+      });
+
+  again:;
+    if (!win.show())
+      return;
+
+    outputFilename = win.outputFilenameValue();
+
+    if (askOverwrite &&
+        base::is_file(outputFilename)) {
+      int ret = OptionalAlert::show(
+        Preferences::instance().exportFile.showOverwriteFilesAlert,
+        1, // Yes is the default option when the alert dialog is disabled
+        fmt::format(Strings::alerts_overwrite_files_on_export(),
+                    outputFilename));
+      if (ret != 1)
+        goto again;
+    }
+
+    // Save the preferences used to export the file, so if we open the
+    // window again, we will have the same options.
+    win.savePref();
+
+    layers = win.layersValue();
+    frames = win.framesValue();
+    xscale = yscale = win.resizeValue();
+    applyPixelRatio = win.applyPixelRatio();
+    aniDirValue = win.aniDirValue();
+    isForTwitter = win.isForTwitter();
+  }
+#endif
+
+  // Pixel ratio
+  if (applyPixelRatio) {
+    doc::PixelRatio pr = doc->sprite()->pixelRatio();
+    xscale *= pr.w;
+    yscale *= pr.h;
   }
 
-  // Is a default output filename in the preferences?
-  if (!docPref.saveCopy.filename().empty()) {
-    ContextWriter writer(context);
-    writer.document()->setFilename(
-      docPref.saveCopy.filename());
-  }
+  // Apply scale
+  const undo::UndoState* undoState = nullptr;
+  bool undoResize = false;
+  if (xscale != 1.0 || yscale != 1.0) {
+    Command* resizeCmd = Commands::instance()->byId(CommandId::SpriteSize());
+    ASSERT(resizeCmd);
+    if (resizeCmd) {
+      int width = doc->sprite()->width();
+      int height = doc->sprite()->height();
+      int newWidth = int(double(width) * xscale);
+      int newHeight = int(double(height) * yscale);
+      if (newWidth < 1) newWidth = 1;
+      if (newHeight < 1) newHeight = 1;
+      if (width != newWidth || height != newHeight) {
+        doc->setInhibitBackup(true);
+        undoState = doc->undoHistory()->currentState();
+        undoResize = true;
 
-  if (saveAsDialog(context, "Export",
-                   (document->isAssociatedToFile() ? oldFilename: std::string()),
-                   delegate)) {
-    docPref.saveCopy.filename(document->filename());
-    if (delegate) {
-      docPref.saveCopy.resizeScale(delegate->getResizeScale());
-      docPref.saveCopy.layer(delegate->getLayers());
-      docPref.saveCopy.frameTag(delegate->getFrames());
-      docPref.saveCopy.applyPixelRatio(delegate->applyPixelRatio());
+        Params params;
+        params.set("use-ui", "false");
+        params.set("width", base::convert_to<std::string>(newWidth).c_str());
+        params.set("height", base::convert_to<std::string>(newHeight).c_str());
+        params.set("resize-method", "nearest-neighbor"); // TODO add algorithm in the UI?
+        context->executeCommand(resizeCmd, params);
+      }
     }
   }
 
-  // Restore the file name.
   {
-    ContextWriter writer(context);
-    writer.document()->setFilename(oldFilename.c_str());
+    RestoreVisibleLayers layersVisibility;
+    if (context->isUIAvailable()) {
+      Site site = context->activeSite();
+
+      // Selected layers to export
+      calculate_visible_layers(site,
+                               layers,
+                               layersVisibility);
+
+      // Selected frames to export
+      SelectedFrames selFrames;
+      FrameTag* frameTag = calculate_selected_frames(
+        site, frames, selFrames);
+      if (frameTag)
+        m_frameTag = frameTag->name();
+      m_selFrames = selFrames;
+      m_adjustFramesByFrameTag = false;
+    }
+
+    base::ScopedValue<std::string> restoreAniDir(
+      m_aniDir,
+      convert_anidir_to_string(aniDirValue), // New value
+      m_aniDir);                             // Restore old value
+
+    // TODO This should be set as options for the specific encoder
+    GifEncoderDurationFix fixGif(isForTwitter);
+    PngEncoderOneAlphaPixel fixPng(isForTwitter);
+
+    saveDocumentInBackground(
+      context, doc, outputFilename, false);
+  }
+
+  // Undo resize
+  if (undoResize &&
+      undoState != doc->undoHistory()->currentState()) {
+    moveToUndoState(doc, undoState);
+    doc->setInhibitBackup(false);
+  }
+}
+
+void SaveFileCopyAsCommand::moveToUndoState(Doc* doc,
+                                            const undo::UndoState* state)
+{
+  try {
+    DocWriter writer(doc, 100);
+    doc->undoHistory()->moveToState(state);
+    doc->generateMaskBoundaries();
+    doc->notifyGeneralUpdate();
+  }
+  catch (const std::exception& ex) {
+    Console::showException(ex);
   }
 }
 

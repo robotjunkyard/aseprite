@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -79,7 +79,7 @@ void ToolLoopManager::pressButton(const Pointer& pointer)
   // If the user pressed the other mouse button...
   if ((m_toolLoop->getMouseButton() == ToolLoop::Left && pointer.button() == Pointer::Right) ||
       (m_toolLoop->getMouseButton() == ToolLoop::Right && pointer.button() == Pointer::Left)) {
-    // Cancel the tool-loop (the destination image should be completelly discarded)
+    // Cancel the tool-loop (the destination image should be completely discarded)
     m_toolLoop->cancel();
     return;
   }
@@ -233,7 +233,9 @@ void ToolLoopManager::calculateDirtyArea(const Strokes& strokes)
   m_dirtyArea.clear();
 
   for (auto& stroke : strokes) {
-    gfx::Rect strokeBounds = stroke.bounds();
+    gfx::Rect strokeBounds =
+      m_toolLoop->getIntertwine()->getStrokeBounds(m_toolLoop, stroke);
+
     if (strokeBounds.isEmpty())
       continue;
 

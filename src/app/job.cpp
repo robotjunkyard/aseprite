@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -93,6 +93,10 @@ void Job::startJob()
       }
       catch (const std::exception& ex) {
         Console::showException(ex);
+      }
+      catch (...) {
+        Console console;
+        console.printf("Unknown error performing the task");
       }
     }
   }

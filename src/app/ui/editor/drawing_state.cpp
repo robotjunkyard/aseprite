@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -20,6 +21,7 @@
 #include "app/tools/tool_loop_manager.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/editor_customization_delegate.h"
+#include "app/ui/editor/editor_render.h"
 #include "app/ui/editor/glue.h"
 #include "app/ui/keyboard_shortcuts.h"
 #include "app/ui/skin/skin_theme.h"
@@ -145,12 +147,15 @@ bool DrawingState::onMouseUp(Editor* editor, MouseMessage* msg)
 {
   ASSERT(m_toolLoopManager != NULL);
 
-  // Selection tools are cancelled with a simple click (only "one
-  // point" controller selection tools aren't cancelled with one click,
-  // i.e. the magic wand).
+  // Selection tools with Replace mode are cancelled with a simple click.
+  // ("one point" controller selection tool i.e. the magic wand, and
+  // selection tools with Add or Subtract mode aren't cancelled with
+  // one click).
   if (!m_toolLoop->getInk()->isSelection() ||
       m_toolLoop->getController()->isOnePoint() ||
-      m_mouseMoveReceived) {
+      m_mouseMoveReceived ||
+      (editor->getToolLoopModifiers() != tools::ToolLoopModifiers::kReplaceSelection &&
+       editor->getToolLoopModifiers() != tools::ToolLoopModifiers::kIntersectSelection)) {
     // Notify the release of the mouse button to the tool loop
     // manager. This is the correct way to say "the user finishes the
     // drawing trace correctly".

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -11,8 +11,8 @@
 #include "app/commands/filters/filter_preview.h"
 
 #include "app/commands/filters/filter_manager_impl.h"
-#include "app/modules/editors.h"
 #include "app/ui/editor/editor.h"
+#include "app/ui/editor/editor_render.h"
 #include "base/bind.h"
 #include "base/scoped_lock.h"
 #include "doc/layer.h"
@@ -38,6 +38,21 @@ FilterPreview::FilterPreview(FilterManagerImpl* filterMgr)
 FilterPreview::~FilterPreview()
 {
   stop();
+}
+
+void FilterPreview::setEnablePreview(bool state)
+{
+  if (state) {
+    Editor::renderEngine().setPreviewImage(
+      m_filterMgr->layer(),
+      m_filterMgr->frame(),
+      m_filterMgr->destinationImage(),
+      m_filterMgr->position(),
+      static_cast<doc::LayerImage*>(m_filterMgr->layer())->blendMode());
+  }
+  else {
+    Editor::renderEngine().removePreviewImage();
+  }
 }
 
 void FilterPreview::stop()
@@ -77,16 +92,11 @@ bool FilterPreview::onProcessMessage(Message* msg)
   switch (msg->type()) {
 
     case kOpenMessage:
-      current_editor->renderEngine().setPreviewImage(
-        m_filterMgr->layer(),
-        m_filterMgr->frame(),
-        m_filterMgr->destinationImage(),
-        m_filterMgr->position(),
-        static_cast<doc::LayerImage*>(m_filterMgr->layer())->blendMode());
+      setEnablePreview(true);
       break;
 
     case kCloseMessage:
-      current_editor->renderEngine().removePreviewImage();
+      setEnablePreview(false);
 
       // Stop the preview timer.
       m_timer.stop();

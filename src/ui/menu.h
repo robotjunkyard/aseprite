@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -8,11 +8,13 @@
 #define UI_MENU_H_INCLUDED
 #pragma once
 
-#include "base/unique_ptr.h"
 #include "obs/signal.h"
 #include "ui/register_message.h"
 #include "ui/separator.h"
 #include "ui/widget.h"
+#include "ui/window.h"
+
+#include <memory>
 
 namespace ui {
 
@@ -26,6 +28,7 @@ namespace ui {
     ~Menu();
 
     void showPopup(const gfx::Point& pos);
+    Widget* findItemById(const char* id);
 
     // Returns the MenuItem that has as submenu this menu.
     MenuItem* getOwnerMenuItem() {
@@ -148,7 +151,7 @@ namespace ui {
     bool m_highlighted;           // Is it highlighted?
     Menu* m_submenu;              // The sub-menu
     MenuBox* m_submenu_menubox;   // The opened menubox for this menu-item
-    base::UniquePtr<Timer> m_submenu_timer; // Timer to open the submenu
+    std::unique_ptr<Timer> m_submenu_timer; // Timer to open the submenu
 
     friend class Menu;
     friend class MenuBox;
@@ -158,6 +161,13 @@ namespace ui {
   public:
     MenuSeparator() : Separator("", HORIZONTAL) {
     }
+  };
+
+  class MenuBoxWindow : public Window {
+  public:
+    MenuBoxWindow(MenuBox* menubox);
+  protected:
+    bool onProcessMessage(Message* msg) override;
   };
 
   extern RegisterMessage kOpenMenuItemMessage;

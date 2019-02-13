@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,14 +9,14 @@
 #include "config.h"
 #endif
 
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/ini_file.h"
 #include "app/pref/preferences.h"
 #include "app/resource_finder.h"
 #include "app/tools/ink.h"
 #include "app/tools/tool.h"
 #include "doc/sprite.h"
-#include "she/system.h"
+#include "os/system.h"
 
 namespace app {
 
@@ -39,7 +40,8 @@ Preferences::Preferences()
   // Hide the menu bar depending on:
   // 1. the native menu bar is available
   // 2. this is the first run of the program
-  if (she::instance()->menus() &&
+  if (os::instance() &&
+      os::instance()->menus() &&
       updater.uuid().empty()) {
     general.showMenuBar(false);
   }
@@ -106,7 +108,7 @@ ToolPreferences& Preferences::tool(tools::Tool* tool)
   }
 }
 
-DocumentPreferences& Preferences::document(const app::Document* doc)
+DocumentPreferences& Preferences::document(const Doc* doc)
 {
   auto it = m_docs.find(doc);
   if (it != m_docs.end()) {
@@ -138,11 +140,11 @@ DocumentPreferences& Preferences::document(const app::Document* doc)
   }
 }
 
-void Preferences::removeDocument(doc::Document* doc)
+void Preferences::removeDocument(Doc* doc)
 {
-  ASSERT(dynamic_cast<app::Document*>(doc));
+  ASSERT(doc);
 
-  auto it = m_docs.find(static_cast<app::Document*>(doc));
+  auto it = m_docs.find(doc);
   if (it != m_docs.end()) {
     serializeDocPref(it->first, it->second, true);
     delete it->second;
@@ -150,12 +152,12 @@ void Preferences::removeDocument(doc::Document* doc)
   }
 }
 
-void Preferences::onRemoveDocument(doc::Document* doc)
+void Preferences::onRemoveDocument(Doc* doc)
 {
   removeDocument(doc);
 }
 
-std::string Preferences::docConfigFileName(const app::Document* doc)
+std::string Preferences::docConfigFileName(const Doc* doc)
 {
   if (!doc)
     return "";
@@ -171,7 +173,7 @@ std::string Preferences::docConfigFileName(const app::Document* doc)
   return rf.getFirstOrCreateDefault();
 }
 
-void Preferences::serializeDocPref(const app::Document* doc, app::DocumentPreferences* docPref, bool save)
+void Preferences::serializeDocPref(const Doc* doc, app::DocumentPreferences* docPref, bool save)
 {
   bool flush_config = false;
 

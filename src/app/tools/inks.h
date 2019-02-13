@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -9,8 +10,8 @@
 #include "app/app.h"                // TODO avoid to include this file
 #include "app/color_utils.h"
 #include "app/context.h"
-#include "app/document.h"
-#include "app/document_undo.h"
+#include "app/doc.h"
+#include "app/doc_undo.h"
 #include "app/tools/pick_ink.h"
 #include "doc/mask.h"
 #include "doc/slice.h"
@@ -40,7 +41,7 @@ protected:
   }
 
   BaseInkProcessing* proc() {
-    return m_proc;
+    return m_proc.get();
   }
 
 private:
@@ -189,8 +190,22 @@ public:
 
 
 class MoveInk : public Ink {
+  bool m_autoSelect;
 public:
+  MoveInk(bool autoSelect) : m_autoSelect(autoSelect) { }
+
   Ink* clone() override { return new MoveInk(*this); }
+
+  bool isCelMovement() const override { return true; }
+  bool isAutoSelectLayer() const override { return m_autoSelect; }
+  void prepareInk(ToolLoop* loop) override { }
+  void inkHline(int x1, int y, int x2, ToolLoop* loop) override { }
+};
+
+
+class SelectLayerInk : public Ink {
+public:
+  Ink* clone() override { return new SelectLayerInk(*this); }
 
   bool isCelMovement() const override { return true; }
   void prepareInk(ToolLoop* loop) override { }
@@ -347,6 +362,7 @@ public:
 class SelectionInk : public BaseInk {
   bool m_modify_selection;
   Mask m_mask;
+  Mask m_intersectMask;
   Rect m_maxBounds;
 
 public:
@@ -375,6 +391,9 @@ public:
       else if ((modifiers & int(ToolLoopModifiers::kSubtractSelection)) != 0) {
         m_mask.subtract(gfx::Rect(x1, y, x2-x1+1, 1));
       }
+      else if ((modifiers & int(ToolLoopModifiers::kIntersectSelection)) != 0) {
+        m_intersectMask.add(gfx::Rect(x1, y, x2-x1+1, 1));
+      }
 
       m_maxBounds |= gfx::Rect(x1, y, x2-x1+1, 1);
     }
@@ -394,6 +413,11 @@ public:
       m_mask.reserve(loop->sprite()->bounds());
     }
     else {
+      int modifiers = int(loop->getModifiers());
+      if ((modifiers & int(ToolLoopModifiers::kIntersectSelection)) != 0) {
+        m_mask.intersect(m_intersectMask);
+      }
+
       // We can intersect the used bounds in inkHline() calls to
       // reduce the shrink computation.
       m_mask.intersect(m_maxBounds);

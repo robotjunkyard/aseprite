@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -13,13 +13,12 @@
 #include "app/commands/cmd_sprite_size.h"
 #include "app/commands/command.h"
 #include "app/commands/params.h"
-#include "app/document_api.h"
+#include "app/doc_api.h"
 #include "app/ini_file.h"
 #include "app/modules/gui.h"
 #include "app/modules/palettes.h"
 #include "app/sprite_job.h"
 #include "base/bind.h"
-#include "base/unique_ptr.h"
 #include "doc/algorithm/resize_image.h"
 #include "doc/cel.h"
 #include "doc/cels_range.h"
@@ -33,7 +32,7 @@
 
 #include "sprite_size.xml.h"
 
-#define PERC_FORMAT     "%.1f"
+#define PERC_FORMAT     "%.4g"
 
 namespace app {
 
@@ -73,7 +72,7 @@ protected:
 
   // [working thread]
   void onJob() override {
-    DocumentApi api = writer().document()->getApi(transaction());
+    DocApi api = writer().document()->getApi(tx());
 
     int cels_count = 0;
     for (Cel* cel : sprite()->uniqueCels()) { // TODO add size() member function to CelsRange
@@ -90,7 +89,7 @@ protected:
         // Resize the cel bounds only if it's from a reference layer
         if (cel->layer()->isReference()) {
           gfx::RectF newBounds = scale_rect<double>(cel->boundsF());
-          transaction().execute(new cmd::SetCelBoundsF(cel, newBounds));
+          tx()(new cmd::SetCelBoundsF(cel, newBounds));
         }
         else {
           // Change its location
@@ -119,7 +118,7 @@ protected:
 
       // Cancel all the operation?
       if (isCanceled())
-        return;        // Transaction destructor will undo all operations
+        return;        // Tx destructor will undo all operations
     }
 
     // Resize mask
@@ -131,7 +130,7 @@ protected:
 
       int w = scale_x(old_bitmap->width());
       int h = scale_y(old_bitmap->height());
-      base::UniquePtr<Mask> new_mask(new Mask);
+      std::unique_ptr<Mask> new_mask(new Mask);
       new_mask->replace(
         gfx::Rect(
           scale_x(document()->mask()->bounds().x-1),
@@ -147,7 +146,7 @@ protected:
       new_mask->intersect(new_mask->bounds());
 
       // Copy new mask
-      api.copyToCurrentMask(new_mask);
+      api.copyToCurrentMask(new_mask.get());
 
       // Regenerate mask
       document()->resetTransformation();
@@ -171,8 +170,7 @@ protected:
           newKey.setPivot(gfx::Point(scale_x(newKey.pivot().x),
                                      scale_y(newKey.pivot().y)));
 
-        transaction().execute(
-          new cmd::SetSliceKey(slice, k.frame(), newKey));
+        tx()(new cmd::SetSliceKey(slice, k.frame(), newKey));
       }
     }
 
@@ -281,11 +279,6 @@ SpriteSizeCommand::SpriteSizeCommand()
   m_resizeMethod = doc::algorithm::RESIZE_METHOD_NEAREST_NEIGHBOR;
 }
 
-Command* SpriteSizeCommand::clone() const
-{
-  return new SpriteSizeCommand(*this);
-}
-
 void SpriteSizeCommand::onLoadParams(const Params& params)
 {
   std::string useUI = params.get("use-ui");
@@ -332,6 +325,7 @@ void SpriteSizeCommand::onExecute(Context* context)
   int new_height = (m_height ? m_height: int(sprite->height()*m_scaleY));
   ResizeMethod resize_method = m_resizeMethod;
 
+#ifdef ENABLE_UI
   if (m_useUI && context->isUIAvailable()) {
     SpriteSizeWindow window(context, new_width, new_height);
     window.remapWindow();
@@ -351,6 +345,10 @@ void SpriteSizeCommand::onExecute(Context* context)
 
     set_config_int("SpriteSize", "Method", resize_method);
   }
+#endif // ENABLE_UI
+
+  new_width = MID(1, new_width, DOC_SPRITE_MAX_WIDTH);
+  new_height = MID(1, new_height, DOC_SPRITE_MAX_HEIGHT);
 
   {
     SpriteSizeJob job(reader, new_width, new_height, resize_method);
@@ -358,7 +356,9 @@ void SpriteSizeCommand::onExecute(Context* context)
     job.waitJob();
   }
 
+#ifdef ENABLE_UI
   update_screen_for_document(reader.document());
+#endif
 }
 
 Command* CommandFactory::createSpriteSizeCommand()

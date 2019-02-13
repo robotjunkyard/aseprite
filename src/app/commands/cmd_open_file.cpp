@@ -14,7 +14,7 @@
 #include "app/commands/command.h"
 #include "app/commands/params.h"
 #include "app/console.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file_selector.h"
 #include "app/job.h"
@@ -26,7 +26,6 @@
 #include "base/bind.h"
 #include "base/fs.h"
 #include "base/thread.h"
-#include "base/unique_ptr.h"
 #include "doc/sprite.h"
 #include "ui/ui.h"
 
@@ -107,6 +106,7 @@ void OpenFileCommand::onExecute(Context* context)
   base::paths filenames;
 
   // interactive
+#ifdef ENABLE_UI
   if (context->isUIAvailable() && m_filename.empty()) {
     base::paths exts = get_readable_extensions();
 
@@ -122,7 +122,9 @@ void OpenFileCommand::onExecute(Context* context)
       return;
     }
   }
-  else if (!m_filename.empty()) {
+  else
+#endif // ENABLE_UI
+  if (!m_filename.empty()) {
     filenames.push_back(m_filename);
   }
 
@@ -149,7 +151,7 @@ void OpenFileCommand::onExecute(Context* context)
     flags |= FILE_LOAD_ONE_FRAME;
 
   for (const auto& filename : filenames) {
-    base::UniquePtr<FileOp> fop(
+    std::unique_ptr<FileOp> fop(
       FileOp::createLoadDocumentOperation(
         context, filename, flags));
     bool unrecent = false;
@@ -178,7 +180,7 @@ void OpenFileCommand::onExecute(Context* context)
         m_usedFiles.push_back(fop->filename());
       }
 
-      OpenFileJob task(fop);
+      OpenFileJob task(fop.get());
       task.showProgressWindow();
 
       // Post-load processing, it is called from the GUI because may require user intervention.
@@ -188,7 +190,7 @@ void OpenFileCommand::onExecute(Context* context)
       if (fop->hasError() && !fop->isStop())
         console.printf(fop->error().c_str());
 
-      Document* document = fop->document();
+      Doc* document = fop->document();
       if (document) {
         if (context->isUIAvailable())
           App::instance()->recentFiles()->addRecentFile(fop->filename().c_str());
@@ -203,7 +205,7 @@ void OpenFileCommand::onExecute(Context* context)
     // so we can remove it from the recent-file list
     if (unrecent) {
       if (context->isUIAvailable())
-        App::instance()->recentFiles()->removeRecentFile(m_filename.c_str());
+        App::instance()->recentFiles()->removeRecentFile(m_filename);
     }
   }
 }

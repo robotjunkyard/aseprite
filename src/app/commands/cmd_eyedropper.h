@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,27 +10,30 @@
 
 #include "app/color.h"
 #include "app/commands/command.h"
-
-namespace doc {
-  class Site;
-}
+#include "gfx/point.h"
 
 namespace render {
   class Projection;
 }
 
 namespace app {
+  class Editor;
+  class Site;
 
   class EyedropperCommand : public Command {
   public:
     EyedropperCommand();
-    Command* clone() const override { return new EyedropperCommand(*this); }
 
     // Returns the color in the given sprite pos.
-    void pickSample(const doc::Site& site,
+    void pickSample(const Site& site,
                     const gfx::PointF& pixelPos,
                     const render::Projection& proj,
                     app::Color& color);
+
+    void executeOnMousePos(Context* context,
+                           Editor* editor,
+                           const gfx::Point& mousePos,
+                           const bool foreground);
 
   protected:
     void onLoadParams(const Params& params) override;

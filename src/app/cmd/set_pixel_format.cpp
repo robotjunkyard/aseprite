@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -14,12 +14,11 @@
 #include "app/cmd/replace_image.h"
 #include "app/cmd/set_cel_opacity.h"
 #include "app/cmd/set_palette.h"
-#include "app/document.h"
-#include "base/unique_ptr.h"
+#include "app/doc.h"
+#include "app/doc_event.h"
 #include "doc/cel.h"
 #include "doc/cels_range.h"
 #include "doc/document.h"
-#include "doc/document_event.h"
 #include "doc/layer.h"
 #include "doc/palette.h"
 #include "doc/sprite.h"
@@ -116,9 +115,9 @@ SetPixelFormat::SetPixelFormat(Sprite* sprite,
       if (pal->frame() != 0)
         m_seq.add(new cmd::RemovePalette(sprite, pal));
 
-    base::UniquePtr<Palette> graypal(Palette::createGrayscale());
+    std::unique_ptr<Palette> graypal(Palette::createGrayscale());
     if (*graypal != *sprite->palette(0))
-      m_seq.add(new cmd::SetPalette(sprite, 0, graypal));
+      m_seq.add(new cmd::SetPalette(sprite, 0, graypal.get()));
   }
 }
 
@@ -148,13 +147,13 @@ void SetPixelFormat::setFormat(PixelFormat format)
   sprite->incrementVersion();
 
   // Regenerate extras
-  static_cast<app::Document*>(sprite->document())
-    ->setExtraCel(ExtraCelRef(nullptr));
+  Doc* doc = static_cast<Doc*>(sprite->document());
+  doc->setExtraCel(ExtraCelRef(nullptr));
 
   // Generate notification
-  DocumentEvent ev(sprite->document());
+  DocEvent ev(doc);
   ev.sprite(sprite);
-  sprite->document()->notify_observers<DocumentEvent&>(&DocumentObserver::onPixelFormatChanged, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onPixelFormatChanged, ev);
 }
 
 } // namespace cmd

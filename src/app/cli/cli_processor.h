@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2016  David Capello
+// Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,29 +10,30 @@
 
 #include "app/cli/cli_delegate.h"
 #include "app/cli/cli_open_file.h"
-#include "base/unique_ptr.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace app {
 
   class AppOptions;
-  class DocumentExporter;
+  class Context;
+  class DocExporter;
 
   class CliProcessor {
   public:
     CliProcessor(CliDelegate* delegate,
                  const AppOptions& options);
-    void process();
+    void process(Context* ctx);
 
   private:
-    bool openFile(CliOpenFile& cof);
-    void saveFile(const CliOpenFile& cof);
+    bool openFile(Context* ctx, CliOpenFile& cof);
+    void saveFile(Context* ctx, const CliOpenFile& cof);
 
     CliDelegate* m_delegate;
     const AppOptions& m_options;
-    base::UniquePtr<DocumentExporter> m_exporter;
+    std::unique_ptr<DocExporter> m_exporter;
   };
 
 } // namespace app

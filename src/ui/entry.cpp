@@ -1,5 +1,6 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -12,10 +13,9 @@
 
 #include "base/bind.h"
 #include "base/string.h"
-#include "clip/clip.h"
-#include "she/draw_text.h"
-#include "she/font.h"
-#include "she/system.h"
+#include "os/draw_text.h"
+#include "os/font.h"
+#include "os/system.h"
 #include "ui/manager.h"
 #include "ui/menu.h"
 #include "ui/message.h"
@@ -25,6 +25,7 @@
 #include "ui/theme.h"
 #include "ui/widget.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -90,12 +91,15 @@ void Entry::setReadOnly(bool state)
 void Entry::showCaret()
 {
   m_hidden = false;
+  if (shouldStartTimer(hasFocus()))
+    m_timer.start();
   invalidate();
 }
 
 void Entry::hideCaret()
 {
   m_hidden = true;
+  m_timer.stop();
   invalidate();
 }
 
@@ -130,7 +134,8 @@ void Entry::setCaretPos(int pos)
     }
   }
 
-  m_timer.start();
+  if (shouldStartTimer(hasFocus()))
+    m_timer.start();
   m_state = true;
 
   invalidate();
@@ -226,7 +231,8 @@ bool Entry::onProcessMessage(Message* msg)
       break;
 
     case kFocusEnterMessage:
-      m_timer.start();
+      if (shouldStartTimer(true))
+        m_timer.start();
 
       m_state = true;
       invalidate();
@@ -241,7 +247,7 @@ bool Entry::onProcessMessage(Message* msg)
 
       // Start processing dead keys
       if (m_translate_dead_keys)
-        she::instance()->setTranslateDeadKeys(true);
+        os::instance()->setTranslateDeadKeys(true);
       break;
 
     case kFocusLeaveMessage:
@@ -256,7 +262,7 @@ bool Entry::onProcessMessage(Message* msg)
 
       // Stop processing dead keys
       if (m_translate_dead_keys)
-        she::instance()->setTranslateDeadKeys(false);
+        os::instance()->setTranslateDeadKeys(false);
       break;
 
     case kKeyDownMessage:
@@ -391,7 +397,8 @@ bool Entry::onProcessMessage(Message* msg)
 
         // Show the caret
         if (is_dirty) {
-          m_timer.start();
+          if (shouldStartTimer(true))
+            m_timer.start();
           m_state = true;
         }
 
@@ -432,18 +439,35 @@ bool Entry::onProcessMessage(Message* msg)
   return Widget::onProcessMessage(msg);
 }
 
+// static
+gfx::Size Entry::sizeHintWithText(Entry* entry,
+                                  const std::string& text)
+{
+  int w =
+    entry->font()->textLength(text) +
+    + 2*entry->theme()->getEntryCaretSize(entry).w
+    + entry->border().width();
+
+  w = std::min(w, ui::display_w()/2);
+
+  int h =
+    + entry->font()->height()
+    + entry->border().height();
+
+  return gfx::Size(w, h);
+}
+
 void Entry::onSizeHint(SizeHintEvent& ev)
 {
   int trailing = font()->textLength(getSuffix());
   trailing = MAX(trailing, 2*theme()->getEntryCaretSize(this).w);
 
   int w =
-    + font()->textLength("w") * MIN(m_maxsize, 6)
+    font()->textLength("w") * std::min(m_maxsize, 6) +
     + trailing
-    + 2*guiscale()
     + border().width();
 
-  w = MIN(w, ui::display_w()/2);
+  w = std::min(w, ui::display_w()/2);
 
   int h =
     + font()->height()
@@ -636,7 +660,7 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
       if (selbeg >= 0) {
         // *cut* text!
         if (cmd == EntryCmd::Cut)
-          clip::set_text(selectedText());
+          set_clipboard_text(selectedText());
 
         // remove text
         text.erase(m_boxes[selbeg].from,
@@ -656,7 +680,7 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
 
     case EntryCmd::Paste: {
       std::string clipboard;
-      if (clip::get_text(clipboard)) {
+      if (get_clipboard_text(clipboard)) {
         // delete the entire selection
         if (selbeg >= 0) {
           text.erase(m_boxes[selbeg].from,
@@ -688,7 +712,7 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
 
     case EntryCmd::Copy:
       if (selbeg >= 0)
-        clip::set_text(selectedText());
+        set_clipboard_text(selectedText());
       break;
 
     case EntryCmd::DeleteBackward:
@@ -812,7 +836,7 @@ void Entry::showEditPopupMenu(const gfx::Point& pt)
   menu.showPopup(pt);
 }
 
-class Entry::CalcBoxesTextDelegate : public she::DrawTextDelegate {
+class Entry::CalcBoxesTextDelegate : public os::DrawTextDelegate {
 public:
   CalcBoxesTextDelegate(const int end) : m_end(end) {
   }
@@ -850,7 +874,7 @@ void Entry::recalcCharBoxes(const std::string& text)
 {
   int lastTextIndex = int(text.size());
   CalcBoxesTextDelegate delegate(lastTextIndex);
-  she::draw_text(nullptr, font(),
+  os::draw_text(nullptr, font(),
                  base::utf8_const_iterator(text.begin()),
                  base::utf8_const_iterator(text.end()),
                  gfx::ColorNone, gfx::ColorNone, 0, 0, &delegate);
@@ -865,6 +889,11 @@ void Entry::recalcCharBoxes(const std::string& text)
   box.codepoint = 0;
   box.from = box.to = lastTextIndex;
   m_boxes.push_back(box);
+}
+
+bool Entry::shouldStartTimer(bool hasFocus)
+{
+  return (!m_hidden && hasFocus && isEnabled());
 }
 
 } // namespace ui

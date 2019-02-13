@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2017  David Capello
+// Copyright (C) 2017-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,8 +10,8 @@
 
 #include "app/cmd/set_slice_name.h"
 
+#include "app/doc_event.h"
 #include "doc/document.h"
-#include "doc/document_event.h"
 #include "doc/slice.h"
 #include "doc/sprite.h"
 

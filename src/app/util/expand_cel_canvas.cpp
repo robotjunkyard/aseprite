@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -16,16 +16,15 @@
 #include "app/cmd/copy_region.h"
 #include "app/cmd/patch_cel.h"
 #include "app/context.h"
-#include "app/document.h"
+#include "app/doc.h"
+#include "app/site.h"
 #include "app/transaction.h"
 #include "app/util/range_utils.h"
-#include "base/unique_ptr.h"
 #include "doc/algorithm/shrink_bounds.h"
 #include "doc/cel.h"
 #include "doc/image.h"
 #include "doc/layer.h"
 #include "doc/primitives.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 
 namespace {
@@ -60,7 +59,7 @@ namespace app {
 ExpandCelCanvas::ExpandCelCanvas(
   Site site, Layer* layer,
   TiledMode tiledMode, Transaction& transaction, Flags flags)
-  : m_document(static_cast<app::Document*>(site.document()))
+  : m_document(site.document())
   , m_sprite(site.sprite())
   , m_layer(layer)
   , m_frame(site.frame())
@@ -242,7 +241,7 @@ void ExpandCelCanvas::rollback()
       static_cast<LayerImage*>(m_layer)->removeCel(m_cel);
 
     delete m_cel;
-    m_celImage.reset(NULL);
+    m_celImage.reset();
   }
 
   m_closed = true;

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -14,8 +14,8 @@
 #include "app/context.h"
 #include "app/crash/read_document.h"
 #include "app/crash/write_document.h"
-#include "app/document.h"
-#include "app/document_access.h"
+#include "app/doc.h"
+#include "app/doc_access.h"
 #include "app/file/file.h"
 #include "app/ui_context.h"
 #include "base/bind.h"
@@ -25,7 +25,6 @@
 #include "base/process.h"
 #include "base/split_string.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
 #include "doc/cancel_io.h"
 
 namespace app {
@@ -39,10 +38,10 @@ Session::Backup::Backup(const std::string& dir)
 
   std::vector<char> buf(1024);
   sprintf(&buf[0], "%s Sprite %dx%d, %d %s: %s",
-    info.format == IMAGE_RGB ? "RGB":
-    info.format == IMAGE_GRAYSCALE ? "Grayscale":
-    info.format == IMAGE_INDEXED ? "Indexed":
-    info.format == IMAGE_BITMAP ? "Bitmap": "Unknown",
+    info.mode == ColorMode::RGB ? "RGB":
+    info.mode == ColorMode::GRAYSCALE ? "Grayscale":
+    info.mode == ColorMode::INDEXED ? "Indexed":
+    info.mode == ColorMode::BITMAP ? "Bitmap": "Unknown",
     info.width, info.height, info.frames,
     info.frames == 1 ? "frame": "frames",
     info.filename.c_str());
@@ -66,6 +65,14 @@ std::string Session::name() const
   base::split_string(name, parts, "-");
 
   if (parts.size() == 3) {
+    if (parts[0].size() == 4+2+2) { // YYYYMMDD -> YYYY-MM-DD
+      parts[0].insert(6, 1, '-');
+      parts[0].insert(4, 1, '-');
+    }
+    if (parts[1].size() == 2+2+2) { // HHMMSS -> HH:MM.SS
+      parts[1].insert(4, 1, '.');
+      parts[1].insert(2, 1, ':');
+    }
     return "Session date: " + parts[0] + " time: " + parts[1] + " (PID " + parts[2] + ")";
   }
   else
@@ -142,11 +149,11 @@ void Session::removeFromDisk()
   }
 }
 
-class CustomWeakDocumentReader : public WeakDocumentReader
-                               , public doc::CancelIO {
+class CustomWeakDocReader : public WeakDocReader
+                          , public doc::CancelIO {
 public:
-  explicit CustomWeakDocumentReader(Document* doc)
-    : WeakDocumentReader(doc) {
+  explicit CustomWeakDocReader(Doc* doc)
+    : WeakDocReader(doc) {
   }
 
   // CancelIO impl
@@ -155,9 +162,9 @@ public:
   }
 };
 
-bool Session::saveDocumentChanges(app::Document* doc)
+bool Session::saveDocumentChanges(Doc* doc)
 {
-  CustomWeakDocumentReader reader(doc);
+  CustomWeakDocReader reader(doc);
   if (!reader.isLocked())
     return false;
 
@@ -173,7 +180,7 @@ bool Session::saveDocumentChanges(app::Document* doc)
   return write_document(dir, doc, &reader);
 }
 
-void Session::removeDocument(app::Document* doc)
+void Session::removeDocument(Doc* doc)
 {
   try {
     delete_document_internals(doc);
@@ -189,19 +196,27 @@ void Session::removeDocument(app::Document* doc)
   }
 }
 
-void Session::restoreBackup(Backup* backup)
+Doc* Session::restoreBackupDoc(const std::string& backupDir)
 {
   Console console;
   try {
-    app::Document* doc = read_document(backup->dir());
+    Doc* doc = read_document(backupDir);
     if (doc) {
       fixFilename(doc);
-      UIContext::instance()->documents().add(doc);
+      return doc;
     }
   }
   catch (const std::exception& ex) {
     Console::showException(ex);
   }
+  return nullptr;
+}
+
+void Session::restoreBackup(Backup* backup)
+{
+  Doc* doc = restoreBackupDoc(backup->dir());
+  if (doc)
+    UIContext::instance()->documents().add(doc);
 }
 
 void Session::restoreBackupById(const ObjectId id)
@@ -210,16 +225,25 @@ void Session::restoreBackupById(const ObjectId id)
   if (!base::is_directory(docDir))
     return;
 
-  base::UniquePtr<Backup> backup(new Backup(docDir));
-  if (backup)
-    restoreBackup(backup.get());
+  Doc* doc = restoreBackupDoc(docDir);
+  if (doc)
+    UIContext::instance()->documents().add(doc);
+}
+
+Doc* Session::restoreBackupDocById(const doc::ObjectId id)
+{
+  std::string docDir = base::join_path(m_path, base::convert_to<std::string>(int(id)));
+  if (!base::is_directory(docDir))
+    return nullptr;
+
+  return restoreBackupDoc(docDir);
 }
 
 void Session::restoreRawImages(Backup* backup, RawImagesAs as)
 {
   Console console;
   try {
-    app::Document* doc = read_document_with_raw_images(backup->dir(), as);
+    Doc* doc = read_document_with_raw_images(backup->dir(), as);
     if (doc) {
       fixFilename(doc);
       UIContext::instance()->documents().add(doc);
@@ -285,7 +309,7 @@ void Session::deleteDirectory(const std::string& dir)
   base::remove_directory(dir);
 }
 
-void Session::fixFilename(app::Document* doc)
+void Session::fixFilename(Doc* doc)
 {
   std::string fn = doc->filename();
   if (fn.empty())

@@ -22,11 +22,11 @@
 #include "base/bind.h"
 #include "base/fs.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
 #include "doc/image.h"
 #include "doc/image_ref.h"
 #include "render/ordered_dither.h"
 #include "render/quantization.h"
+#include "ui/system.h"
 
 #include "paste_text.xml.h"
 
@@ -37,7 +37,6 @@ static std::string last_text_used;
 class PasteTextCommand : public Command {
 public:
   PasteTextCommand();
-  Command* clone() const override { return new PasteTextCommand(*this); }
 
 protected:
   bool onEnabled(Context* ctx) override;
@@ -137,7 +136,7 @@ private:
   }
 
   std::string m_face;
-  base::UniquePtr<FontPopup> m_fontPopup;
+  std::unique_ptr<FontPopup> m_fontPopup;
 };
 
 void PasteTextCommand::onExecute(Context* ctx)

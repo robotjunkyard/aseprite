@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2016-2017  David Capello
+// Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -12,7 +12,6 @@
 
 #include "app/i18n/strings.h"
 #include "base/serialization.h"
-#include "base/unique_ptr.h"
 #include "clip/clip.h"
 #include "doc/color_scales.h"
 #include "doc/image.h"
@@ -21,8 +20,8 @@
 #include "doc/mask_io.h"
 #include "doc/palette_io.h"
 #include "gfx/size.h"
-#include "she/display.h"
-#include "she/system.h"
+#include "os/display.h"
+#include "os/system.h"
 #include "ui/alert.h"
 
 #include <sstream>
@@ -38,7 +37,7 @@ namespace {
   clip::format custom_image_format = 0;
 
   void* native_display_handle() {
-    return she::instance()->defaultDisplay()->nativeHandle();
+    return os::instance()->defaultDisplay()->nativeHandle();
   }
 
   void custom_error_handler(clip::ErrorCode code) {
@@ -205,7 +204,7 @@ bool get_native_clipboard_bitmap(doc::Image** image,
 
   const clip::image_spec& spec = img.spec();
 
-  base::UniquePtr<doc::Image> dst(
+  std::unique_ptr<doc::Image> dst(
     doc::Image::create(doc::IMAGE_RGB,
                        spec.width, spec.height));
 
@@ -234,9 +233,8 @@ bool get_native_clipboard_bitmap(doc::Image** image,
         for (unsigned long x=0; x<spec.width; ++x, ++it, ++src) {
           const uint32_t c = *((const uint32_t*)src);
 
-          // On Windows, 32bpp images are used for performance only,
-          // the alpha mask is always zero (which means that the image
-          // is only RGB, without alpha information).
+          // The alpha mask can be zero (which means that the image is
+          // just RGB).
           int alpha =
             (spec.alpha_mask ?
              uint8_t((c & spec.alpha_mask) >> spec.alpha_shift): 255);

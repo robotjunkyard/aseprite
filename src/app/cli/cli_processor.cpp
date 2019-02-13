@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -16,9 +17,9 @@
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
 #include "app/console.h"
-#include "app/document.h"
-#include "app/document_exporter.h"
-#include "app/document_undo.h"
+#include "app/doc.h"
+#include "app/doc_exporter.h"
+#include "app/doc_undo.h"
 #include "app/file/file.h"
 #include "app/filename_formatter.h"
 #include "app/restore_visible_layers.h"
@@ -113,16 +114,16 @@ void filter_layers(const LayerList& layers,
 } // anonymous namespace
 
 CliProcessor::CliProcessor(CliDelegate* delegate,
-                             const AppOptions& options)
+                           const AppOptions& options)
   : m_delegate(delegate)
   , m_options(options)
   , m_exporter(nullptr)
 {
   if (options.hasExporterParams())
-    m_exporter.reset(new DocumentExporter);
+    m_exporter.reset(new DocExporter);
 }
 
-void CliProcessor::process()
+void CliProcessor::process(Context* ctx)
 {
   // --help
   if (m_options.showHelp()) {
@@ -134,11 +135,13 @@ void CliProcessor::process()
   }
   // Process other options and file names
   else if (!m_options.values().empty()) {
+#ifdef ENABLE_SCRIPTING
+    Params scriptParams;
+#endif
     Console console;
-    UIContext* ctx = UIContext::instance();
     CliOpenFile cof;
     SpriteSheetType sheetType = SpriteSheetType::None;
-    app::Document* lastDoc = nullptr;
+    Doc* lastDoc = nullptr;
     render::DitheringAlgorithm ditheringAlgorithm = render::DitheringAlgorithm::None;
     std::string ditheringMatrix;
 
@@ -155,12 +158,12 @@ void CliProcessor::process()
         // --format <format>
         else if (opt == &m_options.format()) {
           if (m_exporter) {
-            DocumentExporter::DataFormat format = DocumentExporter::DefaultDataFormat;
+            DocExporter::DataFormat format = DocExporter::DefaultDataFormat;
 
             if (value.value() == "json-hash")
-              format = DocumentExporter::JsonHashDataFormat;
+              format = DocExporter::JsonHashDataFormat;
             else if (value.value() == "json-array")
-              format = DocumentExporter::JsonArrayDataFormat;
+              format = DocExporter::JsonArrayDataFormat;
 
             m_exporter->setDataFormat(format);
           }
@@ -180,7 +183,11 @@ void CliProcessor::process()
           if (m_exporter)
             m_exporter->setTextureHeight(strtol(value.value().c_str(), NULL, 0));
         }
-        // --sheet-pack
+        // --sheet-type <sheet-type>
+        // TODO Implement this parameter (never documented, but it's
+        //      shown in --help), anyway some work needed to move the
+        //      sprite sheet size calculation from ExportSpriteSheetCommand
+        //      to DocExporter
         else if (opt == &m_options.sheetType()) {
           if (value.value() == "horizontal")
             sheetType = SpriteSheetType::Horizontal;
@@ -316,7 +323,7 @@ void CliProcessor::process()
 
             cof.document = lastDoc;
             cof.filename = fn;
-            saveFile(cof);
+            saveFile(ctx, cof);
           }
           else
             console.printf("A document is needed before --save-as argument\n");
@@ -327,7 +334,7 @@ void CliProcessor::process()
             ASSERT(cof.document == lastDoc);
 
             std::string filename = value.value();
-            m_delegate->loadPalette(cof, filename);
+            m_delegate->loadPalette(ctx, cof, filename);
           }
           else {
             console.printf("You need to load a document to change its palette with --palette\n");
@@ -341,7 +348,7 @@ void CliProcessor::process()
 
           // Scale all sprites
           for (auto doc : ctx->documents()) {
-            ctx->setActiveDocument(static_cast<app::Document*>(doc));
+            ctx->setActiveDocument(doc);
             ctx->executeCommand(command);
           }
         }
@@ -398,7 +405,7 @@ void CliProcessor::process()
           }
 
           for (auto doc : ctx->documents()) {
-            ctx->setActiveDocument(static_cast<app::Document*>(doc));
+            ctx->setActiveDocument(doc);
             ctx->executeCommand(command, params);
           }
         }
@@ -417,7 +424,7 @@ void CliProcessor::process()
 
           // Shrink all sprites if needed
           for (auto doc : ctx->documents()) {
-            ctx->setActiveDocument(static_cast<app::Document*>(doc));
+            ctx->setActiveDocument(doc);
             scaleWidth = (doc->width() > maxWidth ? maxWidth / doc->width() : 1.0);
             scaleHeight = (doc->height() > maxHeight ? maxHeight / doc->height() : 1.0);
             if (scaleWidth < 1.0 || scaleHeight < 1.0) {
@@ -432,7 +439,17 @@ void CliProcessor::process()
         // --script <filename>
         else if (opt == &m_options.script()) {
           std::string filename = value.value();
-          m_delegate->execScript(filename);
+          m_delegate->execScript(filename, scriptParams);
+        }
+        // --script-param <name=value>
+        else if (opt == &m_options.scriptParam()) {
+          const std::string& v = value.value();
+          auto i = v.find('=');
+          if (i != std::string::npos)
+            scriptParams.set(v.substr(0, i).c_str(),
+                             v.substr(i+1).c_str());
+          else
+            scriptParams.set(v.c_str(), "1");
         }
 #endif
         // --list-layers
@@ -462,7 +479,7 @@ void CliProcessor::process()
       else {
         cof.document = nullptr;
         cof.filename = base::normalize_path(value.value());
-        if (openFile(cof))
+        if (openFile(ctx, cof))
           lastDoc = cof.document;
       }
     }
@@ -471,7 +488,7 @@ void CliProcessor::process()
       if (sheetType != SpriteSheetType::None)
         m_exporter->setSpriteSheetType(sheetType);
 
-      m_delegate->exportFiles(*m_exporter.get());
+      m_delegate->exportFiles(ctx, *m_exporter.get());
       m_exporter.reset(nullptr);
     }
   }
@@ -488,12 +505,11 @@ void CliProcessor::process()
   }
 }
 
-bool CliProcessor::openFile(CliOpenFile& cof)
+bool CliProcessor::openFile(Context* ctx, CliOpenFile& cof)
 {
   m_delegate->beforeOpenFile(cof);
 
-  Context* ctx = UIContext::instance();
-  app::Document* oldDoc = ctx->activeDocument();
+  Doc* oldDoc = ctx->activeDocument();
   Command* openCommand = Commands::instance()->byId(CommandId::OpenFile());
   Params params;
   params.set("filename", cof.filename.c_str());
@@ -501,7 +517,7 @@ bool CliProcessor::openFile(CliOpenFile& cof)
     params.set("oneframe", "true");
   ctx->executeCommand(openCommand, params);
 
-  app::Document* doc = ctx->activeDocument();
+  Doc* doc = ctx->activeDocument();
   // If the active document is equal to the previous one, it
   // means that we couldn't open this specific document.
   if (doc == oldDoc)
@@ -542,7 +558,7 @@ bool CliProcessor::openFile(CliOpenFile& cof)
         filter_layers(doc->sprite()->allLayers(), cof, filteredLayers);
 
         if (cof.splitLayers) {
-          for (Layer* layer : filteredLayers) {
+          for (Layer* layer : filteredLayers.toAllLayersList()) {
             SelectedLayers oneLayer;
             oneLayer.insert(layer);
 
@@ -576,14 +592,13 @@ bool CliProcessor::openFile(CliOpenFile& cof)
   return (doc ? true: false);
 }
 
-void CliProcessor::saveFile(const CliOpenFile& cof)
+void CliProcessor::saveFile(Context* ctx, const CliOpenFile& cof)
 {
-  UIContext* ctx = UIContext::instance();
   ctx->setActiveDocument(cof.document);
 
   Command* trimCommand = Commands::instance()->byId(CommandId::AutocropSprite());
   Command* undoCommand = Commands::instance()->byId(CommandId::Undo());
-  app::Document* doc = cof.document;
+  Doc* doc = cof.document;
   bool clearUndo = false;
 
   if (!cof.crop.isEmpty()) {
@@ -727,7 +742,7 @@ void CliProcessor::saveFile(const CliOpenFile& cof)
         itemCof.filenameFormat = filename_formatter(filenameFormat, fnInfo, false);
 
         // Call delegate
-        m_delegate->saveFile(itemCof);
+        m_delegate->saveFile(ctx, itemCof);
 
         if (cof.trim) {
           ctx->executeCommand(undoCommand);

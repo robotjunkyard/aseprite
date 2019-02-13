@@ -16,7 +16,7 @@
 #include "app/console.h"
 #include "app/context.h"
 #include "app/context_access.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/palette_file.h"
 #include "app/modules/gfx.h"
 #include "app/modules/gui.h"
@@ -29,7 +29,6 @@
 #include "app/ui_context.h"
 #include "base/bind.h"
 #include "base/scoped_value.h"
-#include "base/unique_ptr.h"
 #include "doc/image_impl.h"
 #include "doc/palette.h"
 #include "doc/sprite.h"
@@ -52,7 +51,7 @@ enum {
   COLOR_MODES
 };
 
-static base::UniquePtr<doc::Palette> g_simplePal(nullptr);
+static std::unique_ptr<doc::Palette> g_simplePal(nullptr);
 
 class ColorPopup::SimpleColors : public HBox {
 public:
@@ -187,8 +186,10 @@ ColorPopup::ColorPopup(const ColorButtonOptions& options)
                    new PaletteView(false, PaletteView::SelectOneColor, this, 7*guiscale()):
                    nullptr)
   , m_simpleColors(nullptr)
+  , m_oldAndNew(Shade(2), ColorShades::ClickEntries)
   , m_maskLabel("Transparent Color Selected")
   , m_canPin(options.canPinSelector)
+  , m_insideChange(false)
   , m_disableHexUpdate(false)
 {
   if (options.showSimpleColors) {
@@ -226,6 +227,7 @@ ColorPopup::ColorPopup(const ColorButtonOptions& options)
   m_topBox.addChild(&m_colorType);
   m_topBox.addChild(new Separator("", VERTICAL));
   m_topBox.addChild(&m_hexColorEntry);
+  m_topBox.addChild(&m_oldAndNew);
 
   // TODO fix this hack for close button in popup window
   // Move close button (decorative widget) inside the m_topBox
@@ -261,6 +263,7 @@ ColorPopup::ColorPopup(const ColorButtonOptions& options)
 
   m_sliders.ColorChange.connect(&ColorPopup::onColorSlidersChange, this);
   m_hexColorEntry.ColorChange.connect(&ColorPopup::onColorHexEntryChange, this);
+  m_oldAndNew.Click.connect(&ColorPopup::onSelectOldColor, this);
 
   // Set RGB just for the sizeHint(), and then deselect the color type
   // (the first setColor() call will setup it correctly.)
@@ -311,6 +314,14 @@ void ColorPopup::setColor(const app::Color& color,
 
   if (options == ChangeType)
     selectColorType(m_color.getType());
+
+  // Set the new color
+  Shade shade = m_oldAndNew.getShade();
+  shade.resize(2);
+  shade[1] = (color.getType() == app::Color::IndexType ? color.toRgb(): color);
+  if (!m_insideChange)
+    shade[0] = shade[1];
+  m_oldAndNew.setShade(shade);
 }
 
 app::Color ColorPopup::getColor() const
@@ -370,17 +381,26 @@ void ColorPopup::onMakeFixed()
 
 void ColorPopup::onPaletteViewIndexChange(int index, ui::MouseButtons buttons)
 {
+  base::ScopedValue<bool> restore(m_insideChange, true,
+                                  m_insideChange);
+
   setColorWithSignal(app::Color::fromIndex(index), ChangeType);
 }
 
 void ColorPopup::onColorSlidersChange(ColorSlidersChangeEvent& ev)
 {
+  base::ScopedValue<bool> restore(m_insideChange, true,
+                                  m_insideChange);
+
   setColorWithSignal(ev.color(), DontChangeType);
   findBestfitIndex(ev.color());
 }
 
 void ColorPopup::onColorHexEntryChange(const app::Color& color)
 {
+  base::ScopedValue<bool> restore(m_insideChange, true,
+                                  m_insideChange);
+
   // Disable updating the hex entry so we don't override what the user
   // is writting in the text field.
   m_disableHexUpdate = true;
@@ -394,6 +414,16 @@ void ColorPopup::onColorHexEntryChange(const app::Color& color)
   // user is editing it and the palette "edit mode" is enabled.
   if (!inEditMode())
     m_disableHexUpdate = false;
+}
+
+void ColorPopup::onSelectOldColor()
+{
+  Shade shade = m_oldAndNew.getShade();
+  int hot = m_oldAndNew.getHotEntry();
+  if (hot >= 0 &&
+      hot < int(shade.size())) {
+    setColorWithSignal(shade[hot], DontChangeType);
+  }
 }
 
 void ColorPopup::onSimpleColorClick()
@@ -425,6 +455,9 @@ void ColorPopup::onSimpleColorClick()
 
 void ColorPopup::onColorTypeClick()
 {
+  base::ScopedValue<bool> restore(m_insideChange, true,
+                                  m_insideChange);
+
   if (m_simpleColors)
     m_simpleColors->deselect();
 
@@ -466,6 +499,9 @@ void ColorPopup::onColorTypeClick()
 
 void ColorPopup::onPaletteChange()
 {
+  base::ScopedValue<bool> restore(m_insideChange, inEditMode(),
+                                  m_insideChange);
+
   setColor(getColor(), DontChangeType);
   invalidate();
 
@@ -495,7 +531,13 @@ void ColorPopup::findBestfitIndex(const app::Color& color)
 void ColorPopup::setColorWithSignal(const app::Color& color,
                                     const SetColorOptions options)
 {
+  Shade shade = m_oldAndNew.getShade();
+
   setColor(color, options);
+
+  shade.resize(2);
+  shade[1] = color;
+  m_oldAndNew.setShade(shade);
 
   // Fire ColorChange signal
   ColorChange(color);

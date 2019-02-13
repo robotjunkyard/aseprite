@@ -1,4 +1,5 @@
 // Aseprite Document IO Library
+// Copyright (c) 2018 Igara Studio S.A.
 // Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -14,6 +15,7 @@
 #include "base/exception.h"
 #include "base/file_handle.h"
 #include "base/fs.h"
+#include "gfx/color_space.h"
 #include "dio/aseprite_common.h"
 #include "dio/decode_delegate.h"
 #include "dio/file_interface.h"
@@ -38,12 +40,12 @@ bool AsepriteDecoder::decode()
   }
 
   // Create the new sprite
-  base::UniquePtr<doc::Sprite> sprite(
-    new doc::Sprite(header.depth == 32 ? doc::IMAGE_RGB:
-                    header.depth == 16 ? doc::IMAGE_GRAYSCALE:
-                                         doc::IMAGE_INDEXED,
-                    header.width,
-                    header.height,
+  std::unique_ptr<doc::Sprite> sprite(
+    new doc::Sprite(doc::ImageSpec(header.depth == 32 ? doc::ColorMode::RGB:
+                                   header.depth == 16 ? doc::ColorMode::GRAYSCALE:
+                                                        doc::ColorMode::INDEXED,
+                                   header.width,
+                                   header.height),
                     header.ncolors));
 
   // Set frames and speed
@@ -100,7 +102,7 @@ bool AsepriteDecoder::decode()
           case ASE_FILE_CHUNK_FLI_COLOR2:
             if (!ignore_old_color_chunks) {
               doc::Palette* prevPal = sprite->palette(frame);
-              base::UniquePtr<doc::Palette> pal(
+              std::unique_ptr<doc::Palette> pal(
                 chunk_type == ASE_FILE_CHUNK_FLI_COLOR ?
                 readColorChunk(prevPal, frame):
                 readColor2Chunk(prevPal, frame));
@@ -112,7 +114,7 @@ bool AsepriteDecoder::decode()
 
           case ASE_FILE_CHUNK_PALETTE: {
             doc::Palette* prevPal = sprite->palette(frame);
-            base::UniquePtr<doc::Palette> pal(
+            std::unique_ptr<doc::Palette> pal(
               readPaletteChunk(prevPal, frame));
 
             if (prevPal->countDiff(pal.get(), NULL, NULL) > 0)
@@ -124,7 +126,7 @@ bool AsepriteDecoder::decode()
 
           case ASE_FILE_CHUNK_LAYER: {
             doc::Layer* newLayer =
-              readLayerChunk(&header, sprite,
+              readLayerChunk(&header, sprite.get(),
                              &last_layer,
                              &current_level);
             if (newLayer) {
@@ -136,7 +138,7 @@ bool AsepriteDecoder::decode()
 
           case ASE_FILE_CHUNK_CEL: {
             doc::Cel* cel =
-              readCelChunk(sprite, allLayers, frame,
+              readCelChunk(sprite.get(), allLayers, frame,
                            sprite->pixelFormat(), &header,
                            chunk_pos+chunk_size);
             if (cel) {
@@ -149,6 +151,11 @@ bool AsepriteDecoder::decode()
           case ASE_FILE_CHUNK_CEL_EXTRA: {
             if (last_cel)
               readCelExtraChunk(last_cel);
+            break;
+          }
+
+          case ASE_FILE_CHUNK_COLOR_PROFILE: {
+            readColorProfile(sprite.get());
             break;
           }
 
@@ -268,7 +275,12 @@ void AsepriteDecoder::readFrameHeader(AsepriteFrameHeader* frame_header)
   frame_header->magic = read16();
   frame_header->chunks = read16();
   frame_header->duration = read16();
-  readPadding(6);
+  readPadding(2);
+  uint32_t nchunks = read32();
+
+  if (frame_header->chunks == 0xFFFF &&
+      frame_header->chunks < nchunks)
+    frame_header->chunks = nchunks;
 }
 
 void AsepriteDecoder::readPadding(int bytes)
@@ -417,7 +429,9 @@ doc::Layer* AsepriteDecoder::readLayerChunk(AsepriteHeader* header,
 
   if (layer) {
     // flags
-    layer->setFlags(static_cast<doc::LayerFlags>(flags));
+    layer->setFlags(static_cast<doc::LayerFlags>(
+                      flags &
+                      static_cast<int>(doc::LayerFlags::PersistentFlagsMask)));
 
     // name
     layer->setName(name.c_str());
@@ -527,7 +541,6 @@ void read_compressed_image(FileInterface* f,
 
       size_t uncompressed_bytes = scanline.size() - zstream.avail_out;
       if (uncompressed_bytes > 0) {
-        ASSERT(uncompressed_offset+uncompressed_bytes <= uncompressed.size());
         if (uncompressed_offset+uncompressed_bytes > uncompressed.size())
           throw base::Exception("Bad compressed image.");
 
@@ -593,7 +606,7 @@ doc::Cel* AsepriteDecoder::readCelChunk(doc::Sprite* sprite,
   }
 
   // Create the new frame.
-  base::UniquePtr<doc::Cel> cel;
+  std::unique_ptr<doc::Cel> cel;
 
   switch (cel_type) {
 
@@ -701,7 +714,7 @@ doc::Cel* AsepriteDecoder::readCelChunk(doc::Sprite* sprite,
   if (!cel)
     return nullptr;
 
-  static_cast<doc::LayerImage*>(layer)->addCel(cel);
+  static_cast<doc::LayerImage*>(layer)->addCel(cel.get());
   return cel.release();
 }
 
@@ -722,6 +735,46 @@ void AsepriteDecoder::readCelExtraChunk(doc::Cel* cel)
       cel->setBoundsF(bounds);
     }
   }
+}
+
+void AsepriteDecoder::readColorProfile(doc::Sprite* sprite)
+{
+  int type = read16();
+  int flags = read16();
+  fixmath::fixed gamma = read32();
+  readPadding(8);
+
+  // Without color space, like old Aseprite versions
+  gfx::ColorSpacePtr cs(nullptr);
+
+  switch (type) {
+
+    case ASE_FILE_NO_COLOR_PROFILE:
+      if (flags & ASE_COLOR_PROFILE_FLAG_GAMMA)
+        cs = gfx::ColorSpace::MakeSRGBWithGamma(fixmath::fixtof(gamma));
+      else
+        cs = gfx::ColorSpace::MakeNone();
+      break;
+
+    case ASE_FILE_SRGB_COLOR_PROFILE:
+      if (flags & ASE_COLOR_PROFILE_FLAG_GAMMA)
+        cs = gfx::ColorSpace::MakeSRGBWithGamma(fixmath::fixtof(gamma));
+      else
+        cs = gfx::ColorSpace::MakeSRGB();
+      break;
+
+    case ASE_FILE_ICC_COLOR_PROFILE: {
+      size_t length = read32();
+      if (length > 0) {
+        std::vector<uint8_t> data(length);
+        readBytes(&data[0], length);
+        cs = gfx::ColorSpace::MakeICC(std::move(data));
+      }
+      break;
+    }
+  }
+
+  sprite->setColorSpace(cs);
 }
 
 doc::Mask* AsepriteDecoder::readMaskChunk()
@@ -828,7 +881,7 @@ doc::Slice* AsepriteDecoder::readSliceChunk(doc::Slices& slices)
   read32();                        // 4 bytes reserved
   std::string name = readString(); // Name
 
-  base::UniquePtr<doc::Slice> slice(new doc::Slice);
+  std::unique_ptr<doc::Slice> slice(new doc::Slice);
   slice->setName(name);
 
   // For each key
@@ -856,7 +909,7 @@ doc::Slice* AsepriteDecoder::readSliceChunk(doc::Slices& slices)
     slice->insert(frame, doc::SliceKey(bounds, center, pivot));
   }
 
-  slices.add(slice);
+  slices.add(slice.get());
   return slice.release();
 }
 

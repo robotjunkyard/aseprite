@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -8,18 +8,19 @@
 #define APP_COMMANDS_FILTERS_FILTER_MANAGER_IMPL_H_INCLUDED
 #pragma once
 
+#include "app/commands/filters/cels_target.h"
+#include "app/site.h"
 #include "base/exception.h"
-#include "base/unique_ptr.h"
 #include "doc/image_impl.h"
 #include "doc/image_ref.h"
 #include "doc/pixel_format.h"
-#include "doc/site.h"
 #include "filters/filter_indexed_data.h"
 #include "filters/filter_manager.h"
 #include "gfx/rect.h"
 
 #include <cstring>
 #include <memory>
+#include <vector>
 
 namespace doc {
   class Cel;
@@ -35,7 +36,8 @@ namespace filters {
 
 namespace app {
   class Context;
-  class Document;
+  class Doc;
+  class Editor;
   class Transaction;
 
   using namespace filters;
@@ -43,7 +45,7 @@ namespace app {
   class InvalidAreaException : public base::Exception {
   public:
     InvalidAreaException() throw()
-    : base::Exception("The current mask/area to apply the effect is completelly invalid.") { }
+    : base::Exception("The active selection to apply the effect is out of the canvas.") { }
   };
 
   class NoImageException : public base::Exception {
@@ -77,6 +79,7 @@ namespace app {
     doc::PixelFormat pixelFormat() const;
 
     void setTarget(Target target);
+    void setCelsTarget(CelsTarget celsTarget);
 
     void begin();
     void beginForPreview();
@@ -86,7 +89,7 @@ namespace app {
     bool isTransaction() const;
     void commitTransaction();
 
-    app::Document* document();
+    Doc* document();
     doc::Sprite* sprite() { return m_site.sprite(); }
     doc::Layer* layer() { return m_site.layer(); }
     doc::frame_t frame() { return m_site.frame(); }
@@ -95,6 +98,8 @@ namespace app {
 
     // Updates the current editor to show the progress of the preview.
     void flush();
+
+    void disablePreview();
 
     // FilterManager implementation
     const void* getSourceAddress() override;
@@ -120,11 +125,15 @@ namespace app {
     void apply();
     void applyToCel(doc::Cel* cel);
     bool updateBounds(doc::Mask* mask);
+
+    // Returns true if the palette was changed (true when the filter
+    // modifies the palette).
     bool paletteHasChanged();
     void restoreSpritePalette();
+    void redrawColorPalette();
 
     Context* m_context;
-    doc::Site m_site;
+    Site m_site;
     Filter* m_filter;
     doc::Cel* m_cel;
     doc::ImageRef m_src;
@@ -133,12 +142,13 @@ namespace app {
     int m_nextRowToFlush;
     gfx::Rect m_bounds;
     doc::Mask* m_mask;
-    base::UniquePtr<doc::Mask> m_previewMask;
+    std::unique_ptr<doc::Mask> m_previewMask;
     doc::ImageBits<doc::BitmapTraits> m_maskBits;
     doc::ImageBits<doc::BitmapTraits>::iterator m_maskIterator;
     Target m_targetOrig;          // Original targets
     Target m_target;              // Filtered targets
-    base::UniquePtr<doc::Palette> m_oldPalette;
+    CelsTarget m_celsTarget;
+    std::unique_ptr<doc::Palette> m_oldPalette;
     std::unique_ptr<Transaction> m_transaction;
 
     // Hooks

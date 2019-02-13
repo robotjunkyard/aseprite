@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,6 +9,8 @@
 #include "config.h"
 #endif
 
+#include "app/app.h"
+#include "app/color_spaces.h"
 #include "app/color_utils.h"
 #include "app/modules/gfx.h"
 #include "app/ui/color_sliders.h"
@@ -54,6 +57,9 @@ namespace {
         draw_alpha_slider(g, rc, m_color);
         return;
       }
+
+      // Color space conversion
+      auto convertColor = convert_from_current_to_screen_color_space();
 
       gfx::Color color = gfx::ColorNone;
       int w = MAX(rc.w-1, 1);
@@ -113,7 +119,7 @@ namespace {
               app::Color::fromGray(255 * x / w));
             break;
         }
-        g->drawVLine(color, rc.x+x, rc.y, rc.h);
+        g->drawVLine(convertColor(color), rc.x+x, rc.y, rc.h);
       }
     }
 
@@ -230,6 +236,7 @@ ColorSliders::ColorSliders()
   , m_items(int(Channel::Channels))
   , m_grid(3, false)
   , m_mode(Mode::Absolute)
+  , m_lockSlider(-1)
   , m_lockEntry(-1)
   , m_color(app::Color::fromMask())
 {
@@ -250,6 +257,9 @@ ColorSliders::ColorSliders()
   addSlider(Channel::HslLightness,  "L", 0, 100, -100, 100);
   addSlider(Channel::Gray,          "V", 0, 255, -100, 100);
   addSlider(Channel::Alpha,         "A", 0, 255, -100, 100);
+
+  m_appConn = App::instance()
+    ->ColorSpaceChange.connect([this]{ invalidate(); });
 }
 
 void ColorSliders::setColor(const app::Color& color)
@@ -389,12 +399,18 @@ void ColorSliders::addSlider(const Channel channel,
 
 void ColorSliders::setAbsSliderValue(const Channel i, int value)
 {
+  if (m_lockSlider == i)
+    return;
+
   m_items[i].absSlider->setValue(value);
   updateEntryText(i);
 }
 
 void ColorSliders::setRelSliderValue(const Channel i, int value)
 {
+  if (m_lockSlider == i)
+    return;
+
   m_items[i].relSlider->setValue(value);
   updateEntryText(i);
 }
@@ -427,6 +443,8 @@ void ColorSliders::syncRelHsvHslSliders()
 
 void ColorSliders::onSliderChange(const Channel i)
 {
+  base::ScopedValue<int> lock(m_lockSlider, i, m_lockSlider);
+
   updateEntryText(i);
   onControlChange(i);
 }

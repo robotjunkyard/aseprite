@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -12,6 +12,7 @@
 
 #include "app/color_utils.h"
 #include "app/modules/palettes.h"
+#include "base/debug.h"
 #include "doc/image.h"
 #include "doc/palette.h"
 #include "doc/primitives.h"
@@ -80,7 +81,7 @@ Color Color::fromGray(int g, int a)
 // static
 Color Color::fromIndex(int index)
 {
-  assert(index >= 0);
+  ASSERT(index >= 0);
 
   Color color(Color::IndexType);
   color.m_value.index = index;
@@ -171,6 +172,11 @@ Color Color::fromString(const std::string& str)
   }
 
   return color;
+}
+
+Color Color::toRgb() const
+{
+  return Color::fromRgb(getRed(), getGreen(), getBlue(), getAlpha());
 }
 
 std::string Color::toString() const

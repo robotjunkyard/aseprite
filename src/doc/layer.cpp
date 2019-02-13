@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2016 David Capello
+// Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -326,6 +326,7 @@ void LayerImage::moveCel(Cel* cel, frame_t frame)
 {
   removeCel(cel);
   cel->setFrame(frame);
+  cel->incrementVersion();      // TODO this should be in app::cmd module
   addCel(cel);
 }
 
@@ -428,6 +429,17 @@ layer_t LayerGroup::allLayersCount() const
     ++count;
   }
   return count;
+}
+
+bool LayerGroup::hasVisibleReferenceLayers() const
+{
+  for (Layer* child : m_layers) {
+    if ((child->isReference() && child->isVisible())
+        || (child->isGroup()
+            && static_cast<LayerGroup*>(child)->hasVisibleReferenceLayers()))
+      return true;
+  }
+  return false;
 }
 
 void LayerGroup::allVisibleLayers(LayerList& list) const

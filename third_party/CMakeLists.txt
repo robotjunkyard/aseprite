@@ -1,5 +1,5 @@
 # ASEPRITE
-# Copyright (C) 2001-2017  David Capello
+# Copyright (C) 2001-2018  David Capello
 
 include_directories(.)
 
@@ -13,7 +13,6 @@ endif()
 
 if(NOT USE_SHARED_ZLIB)
   set(SKIP_INSTALL_ALL on)
-  set(ZLIB_LIBRARY zlibstatic)
   # Don't build zlib tests
   set(ZLIB_TESTS OFF CACHE BOOL "Build zlib tests")
   add_subdirectory(zlib)
@@ -25,17 +24,7 @@ if(NOT USE_SHARED_LIBPNG)
   set(PNG_SHARED OFF CACHE BOOL "Build shared lib")
   set(PNG_STATIC ON CACHE BOOL "Build static lib")
   set(PNG_TESTS OFF CACHE BOOL "Build libpng tests")
-  set(ZLIB_INCLUDE_DIR "${ZLIB_INCLUDE_DIRS}")
   add_subdirectory(libpng)
-endif()
-
-if(WITH_WEBP_SUPPORT)
-  if(NOT USE_SHARED_LIBWEBP)
-    # Skia already includes webp library
-    if(NOT USE_SKIA_BACKEND)
-      add_subdirectory(libwebp-cmake)
-    endif()
-  endif()
 endif()
 
 if(NOT USE_SHARED_GIFLIB)
@@ -43,18 +32,20 @@ if(NOT USE_SHARED_GIFLIB)
   add_subdirectory(giflib)
 endif()
 
+if(WITH_WEBP_SUPPORT)
+  # Enable img2webp so "webpmux" library is built
+  set(WEBP_BUILD_IMG2WEBP ON CACHE BOOL "Build the img2webp animation tool.")
+  add_subdirectory(libwebp)
+endif()
+
 if(NOT USE_SHARED_TINYXML)
   add_subdirectory(tinyxml)
 endif()
 
-if(NOT USE_SHARED_CURL)
+if(REQUIRE_CURL AND NOT USE_SHARED_CURL)
   set(BUILD_RELEASE_DEBUG_DIRS ON BOOL)
   set(CMAKE_USE_OPENSSL OFF CACHE BOOL "Use OpenSSL code. Experimental")
   add_subdirectory(curl)
-endif()
-
-if(USE_ALLEG4_BACKEND AND NOT USE_SHARED_LIBLOADPNG)
-  add_subdirectory(loadpng)
 endif()
 
 if(NOT USE_SHARED_PIXMAN)
@@ -63,31 +54,28 @@ endif()
 
 if(NOT USE_SHARED_FREETYPE)
   set(SKIP_INSTALL_ALL on)
-
-  # If we don't do this, the compilation fails because it looks like
-  # ftgzip.c includes our zlib.h, but uses the zconf.h in the
-  # freetype2 library.
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zlib.h)
-    file(RENAME
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zlib.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zlib.h.included)
-  endif()
-
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zconf.h)
-    file(RENAME
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zconf.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zconf.h.included)
-  endif()
+  set(WITH_BZip2 OFF CACHE BOOL "")
 
   add_subdirectory(freetype2)
 
   if(NOT USE_SHARED_LIBPNG)
-    add_dependencies(freetype png_static)
+    add_dependencies(freetype ${PNG_LIBRARIES})
   endif()
 endif()
 
 if(NOT USE_SHARED_HARFBUZZ)
-  add_subdirectory(harfbuzz-cmake)
+  if(NOT USE_SHARED_FREETYPE)
+    set(ENV{FREETYPE_DIR} ${FREETYPE_DIR})
+  endif()
+  set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable freetype interop helpers")
+  set(HB_HAVE_GRAPHITE2 OFF CACHE BOOL "Enable Graphite2 complementary shaper")
+  set(HB_BUILTIN_UCDN ON CACHE BOOL "Use HarfBuzz provided UCDN")
+  set(HB_HAVE_GLIB OFF CACHE BOOL "Enable glib unicode functions")
+  set(HB_HAVE_ICU OFF CACHE BOOL "Enable icu unicode functions")
+  set(HB_HAVE_CORETEXT OFF CACHE BOOL "Enable CoreText shaper backend on macOS")
+  set(HB_HAVE_UNISCRIBE OFF CACHE BOOL "Enable Uniscribe shaper backend on Windows")
+  set(HB_HAVE_DIRECTWRITE OFF CACHE BOOL "Enable DirectWrite shaper backend on Windows")
+  add_subdirectory(harfbuzz)
 endif()
 
 add_subdirectory(simpleini)
@@ -121,41 +109,62 @@ set(ENABLE_TEST OFF CACHE BOOL "Enable unit and regression tests")
 set(ENABLE_COVERAGE OFF CACHE BOOL "Enable code coverage (GCC only, automatically sets ENABLE_TEST to ON)")
 set(ENABLE_LZMA OFF CACHE BOOL "Enable the use of the system LZMA library if found")
 set(ENABLE_CNG OFF CACHE BOOL "Enable the use of CNG(Crypto Next Generation)")
+set(ENABLE_BZip2 OFF CACHE BOOL "Enable the use of the system BZip2 library if found")
+set(ENABLE_LIBXML2 OFF CACHE BOOL "Enable the use of the system libxml2 library if found")
 add_subdirectory(libarchive)
 target_include_directories(archive_static INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libarchive/libarchive>)
 
 # benchmark
 if(ENABLE_BENCHMARKS)
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Enable testing of the benchmark library.")
   add_subdirectory(benchmark)
 endif()
 
-# mujs
-add_library(mujs
-  mujs/jsarray.c
-  mujs/jsboolean.c
-  mujs/jsbuiltin.c
-  mujs/jscompile.c
-  mujs/jsdate.c
-  mujs/jsdtoa.c
-  mujs/jsdump.c
-  mujs/jserror.c
-  mujs/jsfunction.c
-  mujs/jsgc.c
-  mujs/jsintern.c
-  mujs/jslex.c
-  mujs/jsmath.c
-  mujs/jsnumber.c
-  mujs/jsobject.c
-  mujs/json.c
-  mujs/jsparse.c
-  mujs/jsproperty.c
-  mujs/jsregexp.c
-  mujs/jsrun.c
-  mujs/jsstate.c
-  mujs/jsstring.c
-  mujs/jsvalue.c
-  mujs/regexp.c
-  mujs/utf.c
-  mujs/utftype.c)
-target_include_directories(mujs PUBLIC .)
+# tinyexpr
+add_library(tinyexpr tinyexpr/tinyexpr.c)
+target_include_directories(tinyexpr PUBLIC tinyexpr)
+
+# lua
+if(ENABLE_SCRIPTING)
+  add_library(lua
+    lua/lapi.c
+    lua/lcode.c
+    lua/lctype.c
+    lua/ldebug.c
+    lua/ldo.c
+    lua/ldump.c
+    lua/lfunc.c
+    lua/lgc.c
+    lua/llex.c
+    lua/lmem.c
+    lua/lobject.c
+    lua/lopcodes.c
+    lua/lparser.c
+    lua/lstate.c
+    lua/lstring.c
+    lua/ltable.c
+    lua/ltm.c
+    lua/lundump.c
+    lua/lvm.c
+    lua/lzio.c
+    lua/ltests.c)
+  add_library(lauxlib lua/lauxlib.c)
+  add_library(lualib
+    lua/lbaselib.c
+    lua/lcorolib.c
+    lua/ldblib.c
+    lua/linit.c
+    lua/liolib.c
+    lua/lmathlib.c
+    lua/loadlib.c
+    lua/loslib.c
+    lua/lstrlib.c
+    lua/ltablib.c
+    lua/lutf8lib.c)
+  target_compile_definitions(lua PUBLIC LUA_FLOORN2I=1)
+  target_include_directories(lua PUBLIC lua)
+  target_include_directories(lauxlib PUBLIC lua)
+  target_include_directories(lualib PUBLIC lua)
+  target_link_libraries(lauxlib lua)
+endif()

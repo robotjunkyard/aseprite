@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (c) 2016-2017 David Capello
+// Copyright (c) 2016-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -8,8 +8,10 @@
 #define DOC_SELECTED_LAYERS_H_INCLUDED
 #pragma once
 
-#include <set>
 #include "layer_list.h"
+
+#include <iosfwd>
+#include <set>
 
 namespace doc {
 
@@ -37,8 +39,10 @@ namespace doc {
     bool contains(Layer* layer) const;
     bool hasSameParent() const;
     LayerList toLayerList() const;
+    LayerList toAllLayersList() const;
 
     void removeChildrenIfParentIsSelected();
+    void expandCollapsedGroups();
     void selectAllLayers(LayerGroup* group);
     void displace(layer_t layerDelta);
 
@@ -51,6 +55,9 @@ namespace doc {
     bool operator!=(const SelectedLayers& o) const {
       return !operator==(o);
     }
+
+    bool write(std::ostream& os) const;
+    bool read(std::istream& is);
 
   private:
     Set m_set;

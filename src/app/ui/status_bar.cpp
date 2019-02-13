@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -12,8 +13,9 @@
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
 #include "app/context_access.h"
-#include "app/document_access.h"
-#include "app/document_range.h"
+#include "app/doc_access.h"
+#include "app/doc_event.h"
+#include "app/doc_range.h"
 #include "app/modules/editors.h"
 #include "app/modules/gfx.h"
 #include "app/modules/gui.h"
@@ -35,13 +37,12 @@
 #include "app/util/range_utils.h"
 #include "base/bind.h"
 #include "base/string.h"
-#include "doc/document_event.h"
 #include "doc/image.h"
 #include "doc/layer.h"
 #include "doc/sprite.h"
 #include "gfx/size.h"
-#include "she/font.h"
-#include "she/surface.h"
+#include "os/font.h"
+#include "os/surface.h"
 #include "ui/ui.h"
 
 #include <algorithm>
@@ -144,7 +145,7 @@ class StatusBar::Indicators : public HBox {
       gfx::Color textColor = theme->colors.statusBarText();
       Rect rc = clientBounds();
       Graphics* g = ev.graphics();
-      she::Surface* icon = m_part->bitmap(0);
+      os::Surface* icon = m_part->bitmap(0);
 
       g->fillRect(bgColor(), rc);
       if (m_colored)
@@ -238,6 +239,7 @@ public:
     m_indicators.push_back(indicator);
     m_iterator = m_indicators.end();
     m_leftArea.addChild(indicator);
+    m_redraw = true;
   }
 
   void addIconIndicator(const skin::SkinPartPtr& part, bool colored) {
@@ -256,6 +258,7 @@ public:
     m_indicators.push_back(indicator);
     m_iterator = m_indicators.end();
     m_leftArea.addChild(indicator);
+    m_redraw = true;
   }
 
   void addColorIndicator(const app::Color& color) {
@@ -274,6 +277,7 @@ public:
     m_indicators.push_back(indicator);
     m_iterator = m_indicators.end();
     m_leftArea.addChild(indicator);
+    m_redraw = true;
   }
 
   void showBackupIcon(BackupIcon icon) {
@@ -406,7 +410,7 @@ public:
     m_indicators->addTextIndicator(tool->getText().c_str());
 
     // Tool shortcut
-    Key* key = KeyboardShortcuts::instance()->tool(tool);
+    KeyPtr key = KeyboardShortcuts::instance()->tool(tool);
     if (key && !key->accels().empty()) {
       add(theme->parts.iconKey(), true);
       m_indicators->addTextIndicator(key->accels().front().toString().c_str());
@@ -421,20 +425,17 @@ private:
 class StatusBar::CustomizedTipWindow : public ui::TipWindow {
 public:
   CustomizedTipWindow(const std::string& text)
-    : ui::TipWindow(text)
-  {
+    : ui::TipWindow(text) {
   }
 
-  void setInterval(int msecs)
-  {
+  void setInterval(int msecs) {
     if (!m_timer)
       m_timer.reset(new ui::Timer(msecs, this));
     else
       m_timer->setInterval(msecs);
   }
 
-  void startTimer()
-  {
+  void startTimer() {
     m_timer->start();
   }
 
@@ -442,14 +443,15 @@ protected:
   bool onProcessMessage(Message* msg) override {
     switch (msg->type()) {
       case kTimerMessage:
-        closeWindow(NULL);
+        closeWindow(nullptr);
+        m_timer->stop();
         break;
     }
     return ui::TipWindow::onProcessMessage(msg);
   }
 
 private:
-  base::UniquePtr<ui::Timer> m_timer;
+  std::unique_ptr<ui::Timer> m_timer;
 };
 
 // TODO Use a ui::TipWindow with rounded borders, when we add support
@@ -471,7 +473,7 @@ public:
     m_button.Click.connect(base::Bind<void>(&SnapToGridWindow::onDisableSnapToGrid, this));
   }
 
-  void setDocument(app::Document* doc) {
+  void setDocument(Doc* doc) {
     m_doc = doc;
   }
 
@@ -481,7 +483,7 @@ private:
     closeWindow(nullptr);
   }
 
-  app::Document* m_doc;
+  Doc* m_doc;
   ui::Button m_button;
 };
 
@@ -536,7 +538,7 @@ public:
 
 StatusBar* StatusBar::m_instance = NULL;
 
-StatusBar::StatusBar()
+StatusBar::StatusBar(TooltipManager* tooltipManager)
   : m_timeout(0)
   , m_indicators(new Indicators)
   , m_docControls(new HBox)
@@ -579,9 +581,7 @@ StatusBar::StatusBar()
     m_commandsBox = box1;
   }
 
-  // Tooltips manager
-  TooltipManager* tooltipManager = new TooltipManager();
-  addChild(tooltipManager);
+  // Tooltips
   tooltipManager->addTooltipFor(m_currentFrame, "Current Frame", BOTTOM);
   tooltipManager->addTooltipFor(m_zoomEntry, "Zoom Level", BOTTOM);
   tooltipManager->addTooltipFor(m_newFrame, "New Frame", BOTTOM);
@@ -612,6 +612,28 @@ void StatusBar::onSelectedToolChange(tools::Tool* tool)
 void StatusBar::clearText()
 {
   setStatusText(1, "");
+}
+
+void StatusBar::showDefaultText()
+{
+  showDefaultText(current_editor ? current_editor->document(): nullptr);
+}
+
+void StatusBar::showDefaultText(Doc* doc)
+{
+  clearText();
+  if (doc){
+    std::string buf = base::string_printf("%s  :size: %d %d",
+                                          doc->name().c_str(),
+                                          doc->width(),
+                                          doc->height());
+    if (doc->getTransformation().bounds().w != 0) {
+      buf += base::string_printf(" :selsize: %d %d",
+                                 int(doc->getTransformation().bounds().w),
+                                 int(doc->getTransformation().bounds().h));
+    }
+    setStatusText(1, buf.c_str());
+  }
 }
 
 void StatusBar::updateFromEditor(Editor* editor)
@@ -711,8 +733,7 @@ void StatusBar::showSnapToGridWarning(bool state)
       updateSnapToGridWindowPosition();
     }
 
-    m_snapToGridWindow->setDocument(
-      static_cast<app::Document*>(m_doc));
+    m_snapToGridWindow->setDocument(m_doc);
   }
   else {
     if (m_snapToGridWindow)
@@ -756,7 +777,7 @@ void StatusBar::onResize(ResizeEvent& ev)
     updateSnapToGridWindowPosition();
 }
 
-void StatusBar::onActiveSiteChange(const doc::Site& site)
+void StatusBar::onActiveSiteChange(const Site& site)
 {
   if (m_doc && site.document() != m_doc) {
     m_doc->remove_observer(this);
@@ -765,15 +786,14 @@ void StatusBar::onActiveSiteChange(const doc::Site& site)
 
   if (site.document() && site.sprite()) {
     if (!m_doc) {
-      m_doc = const_cast<doc::Document*>(site.document());
+      m_doc = const_cast<Doc*>(site.document());
       m_doc->add_observer(this);
     }
     else {
       ASSERT(m_doc == site.document());
     }
 
-    auto& docPref = Preferences::instance().document(
-      static_cast<app::Document*>(m_doc));
+    auto& docPref = Preferences::instance().document(m_doc);
 
     m_docControls->setVisible(true);
     showSnapToGridWarning(docPref.grid.snap());
@@ -790,7 +810,7 @@ void StatusBar::onActiveSiteChange(const doc::Site& site)
   layout();
 }
 
-void StatusBar::onRemoveDocument(doc::Document* doc)
+void StatusBar::onRemoveDocument(Doc* doc)
 {
   if (m_doc &&
       m_doc == doc) {
@@ -799,7 +819,7 @@ void StatusBar::onRemoveDocument(doc::Document* doc)
   }
 }
 
-void StatusBar::onPixelFormatChanged(DocumentEvent& ev)
+void StatusBar::onPixelFormatChanged(DocEvent& ev)
 {
   // If this is called from the non-UI thread it means that the pixel
   // format change was made in the background,

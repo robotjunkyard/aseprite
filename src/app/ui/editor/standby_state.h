@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -12,6 +12,7 @@
 #include "app/ui/editor/editor_decorator.h"
 #include "app/ui/editor/handle_type.h"
 #include "app/ui/editor/state_with_wheel_behavior.h"
+#include "doc/algorithm/flip_type.h"
 #include "obs/connection.h"
 
 namespace app {
@@ -47,9 +48,11 @@ namespace app {
     virtual Transformation getTransformation(Editor* editor);
 
     void startSelectionTransformation(Editor* editor, const gfx::Point& move, double angle);
-
+    
+    void startFlipTransformation(Editor* editor, doc::algorithm::FlipType flipType);
+    
   protected:
-    void callEyedropper(Editor* editor);
+    void callEyedropper(Editor* editor, const ui::MouseMessage* msg);
     bool checkStartDrawingStraightLine(Editor* editor, const ui::MouseMessage* msg);
 
     class Decorator : public EditorDecorator {
@@ -71,7 +74,6 @@ namespace app {
       bool onSetCursor(tools::Ink* ink, Editor* editor, const gfx::Point& mouseScreenPos);
 
       // EditorDecorator overrides
-      void preRenderDecorator(EditorPreRender* render) override;
       void postRenderDecorator(EditorPostRender* render) override;
       void getInvalidDecoratoredRegion(Editor* editor, gfx::Region& region) override;
 

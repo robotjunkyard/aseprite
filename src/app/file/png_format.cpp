@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,12 +10,14 @@
 #endif
 
 #include "app/app.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file/file_format.h"
 #include "app/file/format_options.h"
+#include "app/file/png_format.h"
 #include "base/file_handle.h"
 #include "doc/doc.h"
+#include "gfx/color_space.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,8 +55,10 @@ class PngFormat : public FileFormat {
   }
 
   bool onLoad(FileOp* fop) override;
+  gfx::ColorSpacePtr loadColorSpace(png_structp png_ptr, png_infop info_ptr);
 #ifdef ENABLE_SAVE
   bool onSave(FileOp* fop) override;
+  void saveColorSpace(png_structp png_ptr, png_infop info_ptr, const gfx::ColorSpace* colorSpace);
 #endif
 };
 
@@ -67,14 +72,40 @@ static void report_png_error(png_structp png_ptr, png_const_charp error)
   ((FileOp*)png_get_error_ptr(png_ptr))->setError("libpng: %s\n", error);
 }
 
+// TODO this should be information in FileOp parameter of onSave()
+static bool fix_one_alpha_pixel = false;
+
+PngEncoderOneAlphaPixel::PngEncoderOneAlphaPixel(bool state)
+{
+  fix_one_alpha_pixel = state;
+}
+
+PngEncoderOneAlphaPixel::~PngEncoderOneAlphaPixel()
+{
+  fix_one_alpha_pixel = false;
+}
+
+// As in png_fixed_point_to_float() in skia/src/codec/SkPngCodec.cpp
+static float png_fixtof(png_fixed_point x)
+{
+  // We multiply by the same factor that libpng used to convert
+  // fixed point -> double.  Since we want floats, we choose to
+  // do the conversion ourselves rather than convert
+  // fixed point -> double -> float.
+  return ((float)x) * 0.00001f;
+}
+
+static png_fixed_point png_ftofix(float x)
+{
+  return x * 100000.0f;
+}
+
 bool PngFormat::onLoad(FileOp* fop)
 {
   png_uint_32 width, height, y;
   unsigned int sig_read = 0;
   png_structp png_ptr;
-  png_infop info_ptr;
   int bit_depth, color_type, interlace_type;
-  int pass, number_passes;
   int num_palette;
   png_colorp palette;
   png_bytepp rows_pointer;
@@ -97,7 +128,7 @@ bool PngFormat::onLoad(FileOp* fop)
   }
 
   /* Allocate/initialize the memory for image information. */
-  info_ptr = png_create_info_struct(png_ptr);
+  png_infop info_ptr = png_create_info_struct(png_ptr);
   if (info_ptr == NULL) {
     fop->setError("png_create_info_struct\n");
     png_destroy_read_struct(&png_ptr, NULL, NULL);
@@ -112,11 +143,6 @@ bool PngFormat::onLoad(FileOp* fop)
     png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
     return false;
   }
-
-  // Do not check sRGB profile
-#ifdef PNG_SKIP_sRGB_CHECK_PROFILE
-  png_set_option(png_ptr, PNG_SKIP_sRGB_CHECK_PROFILE, 1);
-#endif
 
   /* Set up the input control if you are using standard C streams */
   png_init_io(png_ptr, fp);
@@ -155,7 +181,7 @@ bool PngFormat::onLoad(FileOp* fop)
    * png_read_image().  To see how to handle interlacing passes,
    * see the png_read_row() method below:
    */
-  number_passes = png_set_interlace_handling(png_ptr);
+  int number_passes = png_set_interlace_handling(png_ptr);
 
   /* Optional call to gamma correct and add the background to the palette
    * and update info structure.
@@ -242,7 +268,7 @@ bool PngFormat::onLoad(FileOp* fop)
   for (y = 0; y < height; y++)
     rows_pointer[y] = (png_bytep)png_malloc(png_ptr, png_get_rowbytes(png_ptr, info_ptr));
 
-  for (pass = 0; pass < number_passes; pass++) {
+  for (int pass=0; pass<number_passes; ++pass) {
     for (y = 0; y < height; y++) {
       png_read_rows(png_ptr, rows_pointer+y, nullptr, 1);
 
@@ -344,89 +370,161 @@ bool PngFormat::onLoad(FileOp* fop)
   }
   png_free(png_ptr, rows_pointer);
 
+  // Setup the color space.
+  auto colorSpace = PngFormat::loadColorSpace(png_ptr, info_ptr);
+  if (colorSpace)
+    fop->setEmbeddedColorProfile();
+  else { // sRGB is the default PNG color space.
+    colorSpace = gfx::ColorSpace::MakeSRGB();
+  }
+  if (colorSpace &&
+      fop->document()->sprite()->colorSpace()->type() == gfx::ColorSpace::None) {
+    fop->document()->sprite()->setColorSpace(colorSpace);
+    fop->document()->notifyColorSpaceChanged();
+  }
+
   // Clean up after the read, and free any memory allocated
   png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
   return true;
 }
 
+// Returns a colorSpace object that represents any
+// color space information in the encoded data.  If the encoded data
+// contains an invalid/unsupported color space, this will return
+// NULL. If there is no color space information, it will guess sRGB
+//
+// Code to read color spaces from png files from Skia (SkPngCodec.cpp)
+// by Google Inc.
+gfx::ColorSpacePtr PngFormat::loadColorSpace(png_structp png_ptr, png_infop info_ptr)
+{
+  // First check for an ICC profile
+  png_bytep profile;
+  png_uint_32 length;
+  // The below variables are unused, however, we need to pass them in anyway or
+  // png_get_iCCP() will return nothing.
+  // Could knowing the |name| of the profile ever be interesting?  Maybe for debugging?
+  png_charp name;
+  // The |compression| is uninteresting since:
+  //   (1) libpng has already decompressed the profile for us.
+  //   (2) "deflate" is the only mode of decompression that libpng supports.
+  int compression;
+  if (PNG_INFO_iCCP == png_get_iCCP(png_ptr, info_ptr,
+                                    &name, &compression,
+                                    &profile, &length)) {
+    auto colorSpace = gfx::ColorSpace::MakeICC(profile, length);
+    if (name)
+      colorSpace->setName(name);
+    return colorSpace;
+  }
+
+  // Second, check for sRGB.
+  if (png_get_valid(png_ptr, info_ptr, PNG_INFO_sRGB)) {
+    // sRGB chunks also store a rendering intent: Absolute, Relative,
+    // Perceptual, and Saturation.
+    return gfx::ColorSpace::MakeSRGB();
+  }
+
+  // Next, check for chromaticities.
+  png_fixed_point wx, wy, rx, ry, gx, gy, bx, by, invGamma;
+  if (png_get_cHRM_fixed(png_ptr, info_ptr,
+                         &wx, &wy, &rx, &ry, &gx, &gy, &bx, &by)) {
+    gfx::ColorSpacePrimaries primaries;
+    primaries.wx = png_fixtof(wx); primaries.wy = png_fixtof(wy);
+    primaries.rx = png_fixtof(rx); primaries.ry = png_fixtof(ry);
+    primaries.gx = png_fixtof(gx); primaries.gy = png_fixtof(gy);
+    primaries.bx = png_fixtof(bx); primaries.by = png_fixtof(by);
+
+    if (PNG_INFO_gAMA == png_get_gAMA_fixed(png_ptr, info_ptr, &invGamma)) {
+      gfx::ColorSpaceTransferFn fn;
+      fn.a = 1.0f;
+      fn.b = fn.c = fn.d = fn.e = fn.f = 0.0f;
+      fn.g = 1.0f / png_fixtof(invGamma);
+
+      return gfx::ColorSpace::MakeRGB(fn, primaries);
+    }
+
+    // Default to sRGB gamma if the image has color space information,
+    // but does not specify gamma.
+    return gfx::ColorSpace::MakeRGBWithSRGBGamma(primaries);
+  }
+
+  // Last, check for gamma.
+  if (PNG_INFO_gAMA == png_get_gAMA_fixed(png_ptr, info_ptr, &invGamma)) {
+    // Since there is no cHRM, we will guess sRGB gamut.
+    return gfx::ColorSpace::MakeSRGBWithGamma(1.0f / png_fixtof(invGamma));
+  }
+
+  // No color space.
+  return nullptr;
+}
+
 #ifdef ENABLE_SAVE
+
 bool PngFormat::onSave(FileOp* fop)
 {
-  const Image* image = fop->sequenceImage();
-  png_uint_32 width, height, y;
   png_structp png_ptr;
   png_infop info_ptr;
-  png_colorp palette = NULL;
+  png_colorp palette = nullptr;
   png_bytep row_pointer;
   int color_type = 0;
-  int pass, number_passes;
 
-  /* open the file */
-  FileHandle handle(open_file_with_exception(fop->filename(), "wb"));
+  FileHandle handle(open_file_with_exception_sync_on_close(fop->filename(), "wb"));
   FILE* fp = handle.get();
 
-  /* Create and initialize the png_struct with the desired error handler
-   * functions.  If you want to use the default stderr and longjump method,
-   * you can supply NULL for the last three parameters.  We also check that
-   * the library version is compatible with the one used at compile time,
-   * in case we are using dynamically linked libraries.  REQUIRED.
-   */
   png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, (png_voidp)fop,
                                     report_png_error, report_png_error);
   if (png_ptr == NULL) {
     return false;
   }
 
-  /* Allocate/initialize the image information data.  REQUIRED */
   info_ptr = png_create_info_struct(png_ptr);
   if (info_ptr == NULL) {
     png_destroy_write_struct(&png_ptr, NULL);
     return false;
   }
 
-  /* Set error handling.  REQUIRED if you aren't supplying your own
-   * error handling functions in the png_create_write_struct() call.
-   */
   if (setjmp(png_jmpbuf(png_ptr))) {
-    /* If we get here, we had a problem reading the file */
     png_destroy_write_struct(&png_ptr, &info_ptr);
     return false;
   }
 
-  /* set up the output control if you are using standard C streams */
   png_init_io(png_ptr, fp);
 
-  /* Set the image information here.  Width and height are up to 2^31,
-   * bit_depth is one of 1, 2, 4, 8, or 16, but valid values also depend on
-   * the color_type selected. color_type is one of PNG_COLOR_TYPE_GRAY,
-   * PNG_COLOR_TYPE_GRAY_ALPHA, PNG_COLOR_TYPE_PALETTE, PNG_COLOR_TYPE_RGB,
-   * or PNG_COLOR_TYPE_RGB_ALPHA.  interlace is either PNG_INTERLACE_NONE or
-   * PNG_INTERLACE_ADAM7, and the compression_type and filter_type MUST
-   * currently be PNG_COMPRESSION_TYPE_BASE and PNG_FILTER_TYPE_BASE. REQUIRED
-   */
-  width = image->width();
-  height = image->height();
-
+  const Image* image = fop->sequenceImage();
   switch (image->pixelFormat()) {
     case IMAGE_RGB:
-      color_type = fop->document()->sprite()->needAlpha() ?
-        PNG_COLOR_TYPE_RGB_ALPHA:
-        PNG_COLOR_TYPE_RGB;
+      color_type =
+        (fop->document()->sprite()->needAlpha() ||
+         fix_one_alpha_pixel ?
+         PNG_COLOR_TYPE_RGB_ALPHA:
+         PNG_COLOR_TYPE_RGB);
       break;
     case IMAGE_GRAYSCALE:
-      color_type = fop->document()->sprite()->needAlpha() ?
-        PNG_COLOR_TYPE_GRAY_ALPHA:
-        PNG_COLOR_TYPE_GRAY;
+      color_type =
+        (fop->document()->sprite()->needAlpha() ||
+         fix_one_alpha_pixel ?
+         PNG_COLOR_TYPE_GRAY_ALPHA:
+         PNG_COLOR_TYPE_GRAY);
       break;
     case IMAGE_INDEXED:
-      color_type = PNG_COLOR_TYPE_PALETTE;
+      if (fix_one_alpha_pixel)
+        color_type = PNG_COLOR_TYPE_RGB_ALPHA;
+      else
+        color_type = PNG_COLOR_TYPE_PALETTE;
       break;
   }
+
+  const png_uint_32 width = image->width();
+  const png_uint_32 height = image->height();
 
   png_set_IHDR(png_ptr, info_ptr, width, height, 8, color_type,
                PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
 
-  if (image->pixelFormat() == IMAGE_INDEXED) {
+  if (fop->preserveColorProfile() &&
+      fop->document()->sprite()->colorSpace())
+    saveColorSpace(png_ptr, info_ptr, fop->document()->sprite()->colorSpace().get());
+
+  if (color_type == PNG_COLOR_TYPE_PALETTE) {
     int c, r, g, b;
     int pal_size = fop->sequenceGetNColors();
     pal_size = MID(1, pal_size, PNG_MAX_PALETTE_LENGTH);
@@ -472,113 +570,176 @@ bool PngFormat::onSave(FileOp* fop)
     png_free(png_ptr, trans);
   }
 
-  /* Write the file header information. */
   png_write_info(png_ptr, info_ptr);
-
-  /* pack pixels into bytes */
   png_set_packing(png_ptr);
-
-  /* non-interlaced */
-  number_passes = 1;
 
   row_pointer = (png_bytep)png_malloc(png_ptr, png_get_rowbytes(png_ptr, info_ptr));
 
-  /* The number of passes is either 1 for non-interlaced images,
-   * or 7 for interlaced images.
-   */
-  for (pass = 0; pass < number_passes; pass++) {
-    /* If you are only writing one row at a time, this works */
-    for (y = 0; y < height; y++) {
-      /* RGB_ALPHA */
-      if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_RGB_ALPHA) {
-        uint32_t* src_address = (uint32_t*)image->getPixelAddress(0, y);
-        uint8_t* dst_address = row_pointer;
-        unsigned int x, c;
+  for (png_uint_32 y=0; y<height; ++y) {
+    uint8_t* dst_address = row_pointer;
 
-        for (x=0; x<width; x++) {
+    if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_RGB_ALPHA) {
+      unsigned int x, c, a;
+      bool opaque = true;
+
+      if (image->pixelFormat() == IMAGE_RGB) {
+        uint32_t* src_address = (uint32_t*)image->getPixelAddress(0, y);
+
+        for (x=0; x<width; ++x) {
           c = *(src_address++);
+          a = rgba_geta(c);
+
+          if (opaque) {
+            if (a < 255)
+              opaque = false;
+            else if (fix_one_alpha_pixel && x == width-1 && y == height-1)
+              a = 254;
+          }
+
           *(dst_address++) = rgba_getr(c);
           *(dst_address++) = rgba_getg(c);
           *(dst_address++) = rgba_getb(c);
-          *(dst_address++) = rgba_geta(c);
+          *(dst_address++) = a;
         }
       }
-      /* RGB */
-      else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_RGB) {
-        uint32_t* src_address = (uint32_t*)image->getPixelAddress(0, y);
-        uint8_t* dst_address = row_pointer;
-        unsigned int x, c;
-
-        for (x=0; x<width; x++) {
-          c = *(src_address++);
-          *(dst_address++) = rgba_getr(c);
-          *(dst_address++) = rgba_getg(c);
-          *(dst_address++) = rgba_getb(c);
-        }
-      }
-      /* GRAY_ALPHA */
-      else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_GRAY_ALPHA) {
-        uint16_t* src_address = (uint16_t*)image->getPixelAddress(0, y);
-        uint8_t* dst_address = row_pointer;
-        unsigned int x, c;
-
-        for (x=0; x<width; x++) {
-          c = *(src_address++);
-          *(dst_address++) = graya_getv(c);
-          *(dst_address++) = graya_geta(c);
-        }
-      }
-      /* GRAY */
-      else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_GRAY) {
-        uint16_t* src_address = (uint16_t*)image->getPixelAddress(0, y);
-        uint8_t* dst_address = row_pointer;
-        unsigned int x, c;
-
-        for (x=0; x<width; x++) {
-          c = *(src_address++);
-          *(dst_address++) = graya_getv(c);
-        }
-      }
-      /* PALETTE */
-      else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_PALETTE) {
+      // In case that we are converting an indexed image to RGB just
+      // to convert one pixel with alpha=254.
+      else if (image->pixelFormat() == IMAGE_INDEXED) {
         uint8_t* src_address = (uint8_t*)image->getPixelAddress(0, y);
-        uint8_t* dst_address = row_pointer;
-        unsigned int x;
+        unsigned int x, c;
+        int r, g, b, a;
+        bool opaque = true;
 
-        for (x=0; x<width; x++)
-          *(dst_address++) = *(src_address++);
+        for (x=0; x<width; ++x) {
+          c = *(src_address++);
+          fop->sequenceGetColor(c, &r, &g, &b);
+          fop->sequenceGetAlpha(c, &a);
+
+          if (opaque) {
+            if (a < 255)
+              opaque = false;
+            else if (fix_one_alpha_pixel && x == width-1 && y == height-1)
+              a = 254;
+          }
+
+          *(dst_address++) = r;
+          *(dst_address++) = g;
+          *(dst_address++) = b;
+          *(dst_address++) = a;
+        }
       }
-
-      /* write the line */
-      png_write_rows(png_ptr, &row_pointer, 1);
-
-      fop->setProgress(
-        (double)((double)pass + (double)(y+1) / (double)(height))
-        / (double)number_passes);
     }
+    else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_RGB) {
+      uint32_t* src_address = (uint32_t*)image->getPixelAddress(0, y);
+      unsigned int x, c;
+
+      for (x=0; x<width; ++x) {
+        c = *(src_address++);
+        *(dst_address++) = rgba_getr(c);
+        *(dst_address++) = rgba_getg(c);
+        *(dst_address++) = rgba_getb(c);
+      }
+    }
+    else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_GRAY_ALPHA) {
+      uint16_t* src_address = (uint16_t*)image->getPixelAddress(0, y);
+      unsigned int x, c, a;
+      bool opaque = true;
+
+      for (x=0; x<width; x++) {
+        c = *(src_address++);
+        a = graya_geta(c);
+
+        if (opaque) {
+          if (a < 255)
+            opaque = false;
+          else if (fix_one_alpha_pixel && x == width-1 && y == height-1)
+            a = 254;
+        }
+
+        *(dst_address++) = graya_getv(c);
+        *(dst_address++) = a;
+      }
+    }
+    else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_GRAY) {
+      uint16_t* src_address = (uint16_t*)image->getPixelAddress(0, y);
+      unsigned int x, c;
+
+      for (x=0; x<width; ++x) {
+        c = *(src_address++);
+        *(dst_address++) = graya_getv(c);
+      }
+    }
+    else if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_PALETTE) {
+      uint8_t* src_address = (uint8_t*)image->getPixelAddress(0, y);
+      unsigned int x;
+
+      for (x=0; x<width; ++x)
+        *(dst_address++) = *(src_address++);
+    }
+
+    png_write_rows(png_ptr, &row_pointer, 1);
+
+    fop->setProgress((double)(y+1) / (double)(height));
   }
 
   png_free(png_ptr, row_pointer);
-
-  /* It is REQUIRED to call this to finish writing the rest of the file */
   png_write_end(png_ptr, info_ptr);
 
-  /* If you png_malloced a palette, free it here (don't free info_ptr->palette,
-     as recommended in versions 1.0.5m and earlier of this example; if
-     libpng mallocs info_ptr->palette, libpng will free it).  If you
-     allocated it with malloc() instead of png_malloc(), use free() instead
-     of png_free(). */
   if (image->pixelFormat() == IMAGE_INDEXED) {
     png_free(png_ptr, palette);
-    palette = NULL;
+    palette = nullptr;
   }
 
-  /* clean up after the write, and free any memory allocated */
   png_destroy_write_struct(&png_ptr, &info_ptr);
-
-  /* all right */
   return true;
 }
-#endif
+
+void PngFormat::saveColorSpace(png_structp png_ptr, png_infop info_ptr,
+                               const gfx::ColorSpace* colorSpace)
+{
+  switch (colorSpace->type()) {
+
+    case gfx::ColorSpace::None:
+      // Do just nothing (png file without profile, like old Aseprite versions)
+      break;
+
+    case gfx::ColorSpace::sRGB:
+      // TODO save the original intent
+      if (!colorSpace->hasGamma()) {
+        png_set_sRGB(png_ptr, info_ptr, PNG_sRGB_INTENT_PERCEPTUAL);
+        return;
+      }
+
+      // Continue to RGB case...
+
+    case gfx::ColorSpace::RGB: {
+      if (colorSpace->hasPrimaries()) {
+        const gfx::ColorSpacePrimaries* p = colorSpace->primaries();
+        png_set_cHRM_fixed(png_ptr, info_ptr,
+                           png_ftofix(p->wx), png_ftofix(p->wy),
+                           png_ftofix(p->rx), png_ftofix(p->ry),
+                           png_ftofix(p->gx), png_ftofix(p->gy),
+                           png_ftofix(p->bx), png_ftofix(p->by));
+      }
+      if (colorSpace->hasGamma()) {
+        png_set_gAMA_fixed(png_ptr, info_ptr,
+                           png_ftofix(1.0f / colorSpace->gamma()));
+      }
+      break;
+    }
+
+    case gfx::ColorSpace::ICC: {
+      png_set_iCCP(png_ptr, info_ptr,
+                   (png_const_charp)colorSpace->name().c_str(),
+                   PNG_COMPRESSION_TYPE_DEFAULT,
+                   (png_const_bytep)colorSpace->iccData(),
+                   (png_uint_32)colorSpace->iccSize());
+      break;
+    }
+
+  }
+}
+
+#endif  // ENABLE_SAVE
 
 } // namespace app

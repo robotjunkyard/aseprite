@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2015  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -12,9 +13,11 @@
 
 #include "app/cmd_transaction.h"
 #include "app/context_access.h"
-#include "app/document.h"
-#include "app/document_undo.h"
+#include "app/doc.h"
+#include "app/doc_undo.h"
 #include "doc/sprite.h"
+
+#define TX_TRACE(...)
 
 namespace app {
 
@@ -24,7 +27,16 @@ Transaction::Transaction(Context* ctx, const std::string& label, Modification mo
   : m_ctx(ctx)
   , m_cmds(NULL)
 {
-  m_undo = m_ctx->activeDocument()->undoHistory();
+  TX_TRACE("TX: Start <%s> (%s)\n",
+           label.c_str(),
+           modification == ModifyDocument ? "modifies document":
+                                            "doesn't modify document");
+
+  Doc* doc = m_ctx->activeDocument();
+  if (!doc)
+    throw std::runtime_error("No active document to execute a transaction");
+  m_undo = doc->undoHistory();
+
   m_cmds = new CmdTransaction(label,
     modification == Modification::ModifyDocument,
     m_undo->savedCounter());
@@ -50,9 +62,19 @@ Transaction::~Transaction()
   }
 }
 
+// Used to set the document range after all the transaction is
+// executed and before the commit. This range is stored in
+// CmdTransaction to recover it on Edit > Redo.
+void Transaction::setNewDocRange(const DocRange& range)
+{
+  ASSERT(m_cmds);
+  m_cmds->setNewDocRange(range);
+}
+
 void Transaction::commit()
 {
   ASSERT(m_cmds);
+  TX_TRACE("TX: Commit <%s>\n", m_cmds->label().c_str());
 
   m_cmds->commit();
   m_undo->add(m_cmds);
@@ -62,6 +84,7 @@ void Transaction::commit()
 void Transaction::rollback()
 {
   ASSERT(m_cmds);
+  TX_TRACE("TX: Rollback <%s>\n", m_cmds->label().c_str());
 
   m_cmds->undo();
 

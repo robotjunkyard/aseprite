@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (c) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,6 +10,7 @@
 #pragma once
 
 #include "app/color.h"
+#include "obs/connection.h"
 #include "obs/signal.h"
 #include "ui/event.h"
 #include "ui/grid.h"
@@ -85,8 +87,10 @@ namespace app {
     std::vector<Item> m_items;
     ui::Grid m_grid;
     Mode m_mode;
+    int m_lockSlider;
     int m_lockEntry;
     app::Color m_color;
+    obs::scoped_connection m_appConn;
   };
 
   //////////////////////////////////////////////////////////////////////

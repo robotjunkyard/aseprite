@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -28,7 +29,6 @@
 #define FILE_LOAD_DATA_FILE             0x00000020
 
 namespace doc {
-  class Document;
   class FrameTag;
 }
 
@@ -43,8 +43,9 @@ namespace doc {
 }
 
 namespace app {
+
   class Context;
-  class Document;
+  class Doc;
   class FileFormat;
   class FormatOptions;
 
@@ -65,13 +66,13 @@ namespace app {
   class FileOpROI {             // Region of interest
   public:
     FileOpROI();
-    FileOpROI(const app::Document* doc,
+    FileOpROI(const Doc* doc,
               const std::string& sliceName,
               const std::string& frameTagName,
               const doc::SelectedFrames& selFrames,
               const bool adjustByFrameTag);
 
-    const app::Document* document() const { return m_document; }
+    const Doc* document() const { return m_document; }
     doc::Slice* slice() const { return m_slice; }
     doc::FrameTag* frameTag() const { return m_frameTag; }
     doc::frame_t fromFrame() const { return m_selFrames.firstFrame(); }
@@ -83,7 +84,7 @@ namespace app {
     }
 
   private:
-    const app::Document* m_document;
+    const Doc* m_document;
     doc::Slice* m_slice;
     doc::FrameTag* m_frameTag;
     doc::SelectedFrames m_selFrames;
@@ -104,19 +105,21 @@ namespace app {
     static FileOp* createSaveDocumentOperation(const Context* context,
                                                const FileOpROI& roi,
                                                const std::string& filename,
-                                               const std::string& filenameFormat);
+                                               const std::string& filenameFormat,
+                                               const bool ignoreEmptyFrames);
 
     ~FileOp();
 
     bool isSequence() const { return !m_seq.filename_list.empty(); }
     bool isOneFrame() const { return m_oneframe; }
+    bool preserveColorProfile() const { return m_preserveColorProfile; }
 
     const std::string& filename() const { return m_filename; }
     const base::paths& filenames() const { return m_seq.filename_list; }
     Context* context() const { return m_context; }
-    Document* document() const { return m_document; }
-    Document* releaseDocument() {
-      Document* doc = m_document;
+    Doc* document() const { return m_document; }
+    Doc* releaseDocument() {
+      Doc* doc = m_document;
       m_document = nullptr;
       return doc;
     }
@@ -167,6 +170,9 @@ namespace app {
 
     void getFilenameList(base::paths& output) const;
 
+    void setEmbeddedColorProfile() { m_embeddedColorProfile = true; }
+    bool hasEmbeddedColorProfile() const { return m_embeddedColorProfile; }
+
   private:
     FileOp();                   // Undefined
     FileOp(FileOpType type, Context* context);
@@ -176,7 +182,7 @@ namespace app {
     Context* m_context;
     // TODO this should be a shared pointer (and we should remove
     //      releaseDocument() member function)
-    Document* m_document;       // Loaded document, or document to be saved.
+    Doc* m_document;            // Loaded document, or document to be saved.
     std::string m_filename;     // File-name to load/save.
     std::string m_dataFilename; // File-name for a special XML .aseprite-data where extra sprite data can be stored
     FileOpROI m_roi;
@@ -191,6 +197,14 @@ namespace app {
     bool m_oneframe;            // Load just one frame (in formats
                                 // that support animation like
                                 // GIF/FLI/ASE).
+    bool m_ignoreEmpty;
+
+    // Return if we've to save/embed the color space of the document
+    // in the file.
+    bool m_preserveColorProfile;
+
+    // True if the file contained a color profile when it was loaded.
+    bool m_embeddedColorProfile;
 
     base::SharedPtr<FormatOptions> m_formatOptions;
 
@@ -219,8 +233,8 @@ namespace app {
   base::paths get_writable_extensions();
 
   // High-level routines to load/save documents.
-  app::Document* load_document(Context* context, const std::string& filename);
-  int save_document(Context* context, doc::Document* document);
+  Doc* load_document(Context* context, const std::string& filename);
+  int save_document(Context* context, Doc* document);
 
   // Returns true if the given filename contains a file extension that
   // can be used to save only static images (i.e. animations are saved

@@ -1,5 +1,5 @@
 // Aseprite Code Generator
-// Copyright (c) 2016-2017 David Capello
+// Copyright (c) 2016-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -11,7 +11,6 @@
 #include "base/fs.h"
 #include "base/split_string.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
 #include "cfg/cfg.h"
 #include "gen/common.h"
 
@@ -19,6 +18,7 @@
 
 #include <cctype>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -100,7 +100,7 @@ public:
     for (const auto& fn : base::list_files(dir)) {
       std::string fullFn = base::join_path(dir, fn);
       base::FileHandle inputFile(base::open_file(fullFn, "rb"));
-      base::UniquePtr<TiXmlDocument> doc(new TiXmlDocument());
+      std::unique_ptr<TiXmlDocument> doc(new TiXmlDocument());
       doc->SetValue(fullFn.c_str());
       if (!doc->LoadFile(inputFile.get())) {
         std::cerr << doc->Value() << ":"
@@ -112,8 +112,12 @@ public:
         throw std::runtime_error("invalid input file");
       }
 
-      TiXmlHandle handle(doc);
+      TiXmlHandle handle(doc.get());
       XmlElements widgets;
+
+      const char* warnings = doc->RootElement()->Attribute("i18nwarnings");
+      if (warnings && strcmp(warnings, "false") == 0)
+        continue;
 
       m_prefixId = find_first_id(doc->RootElement());
 
@@ -127,7 +131,7 @@ public:
 
   void checkStringsOnGuiFile(const std::string& fullFn) {
     base::FileHandle inputFile(base::open_file(fullFn, "rb"));
-    base::UniquePtr<TiXmlDocument> doc(new TiXmlDocument());
+    std::unique_ptr<TiXmlDocument> doc(new TiXmlDocument());
     doc->SetValue(fullFn.c_str());
     if (!doc->LoadFile(inputFile.get())) {
       std::cerr << doc->Value() << ":"
@@ -139,7 +143,7 @@ public:
       throw std::runtime_error("invalid input file");
     }
 
-    TiXmlHandle handle(doc);
+    TiXmlHandle handle(doc.get());
 
     // For each menu
     TiXmlElement* xmlMenu = handle
