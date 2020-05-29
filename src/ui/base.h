@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -8,28 +8,6 @@
 #ifndef UI_BASE_H_INCLUDED
 #define UI_BASE_H_INCLUDED
 #pragma once
-
-// Get the system's definition of NULL
-#include <stddef.h>
-
-#ifndef TRUE
-  #define TRUE         (-1)
-  #define FALSE        (0)
-#endif
-
-#undef MIN
-#undef MAX
-#undef MID
-
-#define MIN(x,y)     (((x) < (y)) ? (x) : (y))
-#define MAX(x,y)     (((x) > (y)) ? (x) : (y))
-#define MID(x,y,z)   MAX((x), MIN((y), (z)))
-
-#undef ABS
-#define ABS(x)       (((x) >= 0) ? (x) : (-(x)))
-
-#undef SGN
-#define SGN(x)       (((x) >= 0) ? 1 : -1)
 
 namespace ui {
 
@@ -64,6 +42,7 @@ namespace ui {
     BOTTOM           = 0x00800000,
     HOMOGENEOUS      = 0x01000000,
     WORDWRAP         = 0x02000000,
+    CHARWRAP         = 0x04000000,
     ALIGN_MASK       = 0x7fff0000,
   };
 

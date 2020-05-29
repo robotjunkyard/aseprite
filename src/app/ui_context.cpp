@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,10 +9,11 @@
 #include "config.h"
 #endif
 
+#include "app/ui_context.h"
+
 #include "app/app.h"
 #include "app/doc.h"
 #include "app/modules/editors.h"
-#include "app/pref/preferences.h"
 #include "app/site.h"
 #include "app/ui/color_bar.h"
 #include "app/ui/doc_view.h"
@@ -23,9 +25,11 @@
 #include "app/ui/timeline/timeline.h"
 #include "app/ui/workspace.h"
 #include "app/ui/workspace_tabs.h"
-#include "app/ui_context.h"
 #include "base/mutex.h"
 #include "doc/sprite.h"
+#include "ui/system.h"
+
+#include <algorithm>
 
 namespace app {
 
@@ -33,24 +37,26 @@ UIContext* UIContext::m_instance = nullptr;
 
 UIContext::UIContext()
   : m_lastSelectedView(nullptr)
+  , m_closedDocs(preferences())
 {
-  documents().add_observer(&Preferences::instance());
-
-  ASSERT(m_instance == NULL);
+  ASSERT(m_instance == nullptr);
   m_instance = this;
 }
 
 UIContext::~UIContext()
 {
   ASSERT(m_instance == this);
-  m_instance = NULL;
-
-  documents().remove_observer(&Preferences::instance());
+  m_instance = nullptr;
 
   // The context must be empty at this point. (It's to check if the UI
   // is working correctly, i.e. closing all files when the user can
   // take any action about it.)
-  ASSERT(documents().empty());
+  //
+  // Note: This assert is commented because it's really common to hit
+  // it when the program crashes by any other reason, and we would
+  // like to see that other reason instead of this assert.
+
+  //ASSERT(documents().empty());
 }
 
 bool UIContext::isUIAvailable() const
@@ -120,9 +126,10 @@ void UIContext::setActiveView(DocView* docView)
   m_lastSelectedView = docView;
 
   // TODO all the calls to functions like updateUsingEditor(),
-  // setPixelFormat(), app_refresh_screen(), updateDisplayTitleBar()
-  // Can be replaced with a ContextObserver listening to the
-  // onActiveSiteChange() event.
+  // setPixelFormat(), app_refresh_screen(), updateDisplayTitleBar(),
+  // etc. could be replaced with the Transaction class, which is a
+  // DocObserver and handles updates on the screen processing the
+  // observed changes.
   notifyActiveSiteChanged();
 }
 
@@ -139,6 +146,49 @@ void UIContext::onSetActiveDocument(Doc* document)
 
   if (notify)
     notifyActiveSiteChanged();
+}
+
+void UIContext::onSetActiveLayer(doc::Layer* layer)
+{
+  if (DocView* docView = activeView()) {
+    if (Editor* editor = docView->editor())
+      editor->setLayer(layer);
+  }
+  else if (!isUIAvailable())
+    Context::onSetActiveLayer(layer);
+}
+
+void UIContext::onSetActiveFrame(const doc::frame_t frame)
+{
+  if (DocView* docView = activeView()) {
+    if (Editor* editor = docView->editor())
+      editor->setFrame(frame);
+  }
+  else if (!isUIAvailable())
+    Context::onSetActiveFrame(frame);
+}
+
+void UIContext::onSetRange(const DocRange& range)
+{
+  Timeline* timeline =
+    (App::instance()->mainWindow() ?
+     App::instance()->mainWindow()->getTimeline(): nullptr);
+  if (timeline) {
+    timeline->setRange(range);
+  }
+  else if (!isUIAvailable()) {
+    Context::onSetRange(range);
+  }
+}
+
+void UIContext::onSetSelectedColors(const doc::PalettePicks& picks)
+{
+  if (activeView()) {
+    if (ColorBar* colorBar = ColorBar::instance())
+      colorBar->getPaletteView()->setSelectedEntries(picks);
+  }
+  else if (!isUIAvailable())
+    Context::onSetSelectedColors(picks);
 }
 
 DocView* UIContext::getFirstDocView(Doc* document) const
@@ -160,17 +210,17 @@ DocView* UIContext::getFirstDocView(Doc* document) const
 
 DocViews UIContext::getAllDocViews(Doc* document) const
 {
-  Workspace* workspace = App::instance()->workspace();
   DocViews docViews;
-
-  for (WorkspaceView* view : *workspace) {
-    if (DocView* docView = dynamic_cast<DocView*>(view)) {
-      if (docView->document() == document) {
-        docViews.push_back(docView);
+  // The workspace can be nullptr when we are running in batch mode.
+  if (Workspace* workspace = App::instance()->workspace()) {
+    for (WorkspaceView* view : *workspace) {
+      if (DocView* docView = dynamic_cast<DocView*>(view)) {
+        if (docView->document() == document) {
+          docViews.push_back(docView);
+        }
       }
     }
   }
-
   return docViews;
 }
 
@@ -200,6 +250,32 @@ Editor* UIContext::activeEditor()
     return view->editor();
   else
     return NULL;
+}
+
+Editor* UIContext::getEditorFor(Doc* document)
+{
+  if (auto view = getFirstDocView(document))
+    return view->editor();
+  else
+    return nullptr;
+}
+
+bool UIContext::hasClosedDocs()
+{
+  return m_closedDocs.hasClosedDocs();
+}
+
+void UIContext::reopenLastClosedDoc()
+{
+  if (Doc* doc = m_closedDocs.reopenLastClosedDoc()) {
+    // Put the document in the context again.
+    doc->setContext(this);
+  }
+}
+
+std::vector<Doc*> UIContext::getAndRemoveAllClosedDocs()
+{
+  return m_closedDocs.getAndRemoveAllClosedDocs();
 }
 
 void UIContext::onAddDocument(Doc* doc)
@@ -240,28 +316,32 @@ void UIContext::onRemoveDocument(Doc* doc)
 
 void UIContext::onGetActiveSite(Site* site) const
 {
+  // We can use the activeView only from the UI thread.
+#ifdef _DEBUG
+  if (isUIAvailable())
+    ui::assert_ui_thread();
+#endif
+
   DocView* view = activeView();
   if (view) {
     view->getSite(site);
 
     if (site->sprite()) {
-      // Selected layers
+      // Selected range in the timeline
       Timeline* timeline = App::instance()->timeline();
       if (timeline &&
           timeline->range().enabled()) {
-        switch (timeline->range().type()) {
-          case DocRange::kCels:   site->focus(Site::InCels); break;
-          case DocRange::kFrames: site->focus(Site::InFrames); break;
-          case DocRange::kLayers: site->focus(Site::InLayers); break;
-        }
-        site->selectedLayers(timeline->selectedLayers());
-        site->selectedFrames(timeline->selectedFrames());
+        site->range(timeline->range());
       }
       else {
         ColorBar* colorBar = ColorBar::instance();
         if (colorBar &&
             colorBar->getPaletteView()->getSelectedEntriesCount() > 0) {
           site->focus(Site::InColorBar);
+
+          doc::PalettePicks picks;
+          colorBar->getPaletteView()->getSelectedEntries(picks);
+          site->selectedColors(picks);
         }
         else {
           site->focus(Site::InEditor);
@@ -272,6 +352,14 @@ void UIContext::onGetActiveSite(Site* site) const
   else if (!isUIAvailable()) {
     return app::Context::onGetActiveSite(site);
   }
+}
+
+void UIContext::onCloseDocument(Doc* doc)
+{
+  ASSERT(doc != nullptr);
+  ASSERT(doc->context() == nullptr);
+
+  m_closedDocs.addClosedDoc(doc);
 }
 
 } // namespace app

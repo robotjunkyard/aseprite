@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -16,8 +17,11 @@
 #include "doc/image_ref.h"
 #include "gfx/rect.h"
 
+#include <map>
+
 namespace doc {
   class Cel;
+  class CelData;
   class Image;
   class Layer;
   class LayerGroup;
@@ -44,15 +48,17 @@ namespace app {
     // Sprite API
     void setSpriteSize(Sprite* sprite, int w, int h);
     void setSpriteTransparentColor(Sprite* sprite, color_t maskColor);
-    void cropSprite(Sprite* sprite, const gfx::Rect& bounds);
-    void trimSprite(Sprite* sprite);
+    void cropSprite(Sprite* sprite,
+                    const gfx::Rect& bounds,
+                    const bool trimOutside = false);
+    void trimSprite(Sprite* sprite, const bool byGrid);
 
     // Frames API
     void addFrame(Sprite* sprite, frame_t newFrame);
     void addEmptyFrame(Sprite* sprite, frame_t newFrame);
     void addEmptyFramesTo(Sprite* sprite, frame_t newFrame);
     void copyFrame(Sprite* sprite,
-                   const frame_t fromFrame,
+                   frame_t fromFrame,
                    const frame_t newFrame,
                    const DropFramePlace dropFramePlace,
                    const TagsHandling tagsHandling);
@@ -71,6 +77,7 @@ namespace app {
     Cel* addCel(LayerImage* layer, frame_t frameNumber, const ImageRef& image);
     void clearCel(LayerImage* layer, frame_t frame);
     void clearCel(Cel* cel);
+    void clearCelAndAllLinks(Cel* cel);
     void setCelPosition(Sprite* sprite, Cel* cel, int x, int y);
     void setCelOpacity(Sprite* sprite, Cel* cel, int newOpacity);
     void moveCel(
@@ -78,10 +85,8 @@ namespace app {
       LayerImage* dstLayer, frame_t dstFrame);
     void copyCel(
       LayerImage* srcLayer, frame_t srcFrame,
-      LayerImage* dstLayer, frame_t dstFrame);
-    void copyCel(
-      LayerImage* srcLayer, frame_t srcFrame,
-      LayerImage* dstLayer, frame_t dstFrame, bool continuous);
+      LayerImage* dstLayer, frame_t dstFrame,
+      const bool* forceContinuous = nullptr);
     void swapCel(
       LayerImage* layer, frame_t frame1, frame_t frame2);
 
@@ -112,16 +117,47 @@ namespace app {
     void setPalette(Sprite* sprite, frame_t frame, const Palette* newPalette);
 
   private:
+    void cropImageLayer(LayerImage* layer,
+                        const gfx::Rect& bounds,
+                        const bool trimOutside);
+    bool cropCel(LayerImage* layer,
+                 Cel* cel,
+                 const gfx::Rect& bounds,
+                 const bool trimOutside);
     void setCelFramePosition(Cel* cel, frame_t frame);
     void moveFrameLayer(Layer* layer, frame_t frame, frame_t beforeFrame);
-    void adjustFrameTags(Sprite* sprite,
-                         const frame_t frame,
-                         const frame_t delta,
-                         const DropFramePlace dropFramePlace,
-                         const TagsHandling tagsHandling);
+    void adjustTags(Sprite* sprite,
+                    const frame_t frame,
+                    const frame_t delta,
+                    const DropFramePlace dropFramePlace,
+                    const TagsHandling tagsHandling);
+
+    class HandleLinkedCels {
+    public:
+      HandleLinkedCels(
+        DocApi& api,
+        doc::LayerImage* srcLayer, const doc::frame_t srcFrame,
+        doc::LayerImage* dstLayer, const doc::frame_t dstFrame);
+      ~HandleLinkedCels();
+      bool linkWasCreated() { return m_created; }
+    private:
+      DocApi& m_api;
+      doc::ObjectId m_srcDataId;
+      doc::Layer* m_dstLayer;
+      doc::frame_t m_dstFrame;
+      bool m_created;
+    };
+
+    bool copyFromLinkedCels(Cel** srcCel,
+                            doc::ObjectId& srcDataId);
 
     Doc* m_document;
     Transaction& m_transaction;
+
+    // Map used in copyCel() to re-create the original set of linked
+    // cels from the src layers when we copy a block of cels.
+    // map: ObjectId of CelData -> Cel*
+    std::map<doc::ObjectId, doc::Cel*> m_linkedCels;
   };
 
 } // namespace app

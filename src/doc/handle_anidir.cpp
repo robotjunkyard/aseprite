@@ -1,5 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2016 David Capello
+// Copyright (C) 2019-2020  Igara Studio S.A.
+// Copyright (C) 2001-2016  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,10 +11,10 @@
 
 #include "doc/handle_anidir.h"
 
-#include "base/base.h"
+#include "base/clamp.h"
 #include "doc/frame.h"
-#include "doc/frame_tag.h"
 #include "doc/sprite.h"
+#include "doc/tag.h"
 
 namespace doc {
 
@@ -21,7 +22,7 @@ frame_t calculate_next_frame(
   const Sprite* sprite,
   frame_t frame,
   frame_t frameDelta,
-  const FrameTag* tag,
+  const Tag* tag,
   bool& pingPongForward)
 {
   if (frameDelta == 0)
@@ -36,8 +37,8 @@ frame_t calculate_next_frame(
 
     loopFrom = tag->fromFrame();
     loopTo   = tag->toFrame();
-    loopFrom = MID(first, loopFrom, last);
-    loopTo   = MID(first, loopTo, last);
+    loopFrom = base::clamp(loopFrom, first, last);
+    loopTo   = base::clamp(loopTo, first, last);
 
     first  = loopFrom;
     last   = loopTo;

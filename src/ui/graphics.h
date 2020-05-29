@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -9,16 +10,19 @@
 #pragma once
 
 #include "base/disable_copying.h"
-#include "base/shared_ptr.h"
 #include "base/string.h"
 #include "gfx/color.h"
 #include "gfx/point.h"
 #include "gfx/rect.h"
 #include "gfx/size.h"
+#include "os/paint.h"
 
+#include <memory>
 #include <string>
 
 namespace gfx {
+  class Matrix;
+  class Path;
   class Region;
 }
 
@@ -29,6 +33,7 @@ namespace os {
 }
 
 namespace ui {
+  using os::Paint;
 
   // Class to render a widget in the screen.
   class Graphics {
@@ -55,6 +60,13 @@ namespace ui {
     void restoreClip();
     bool clipRect(const gfx::Rect& rc);
 
+    void save();
+    void concat(const gfx::Matrix& matrix);
+    void setMatrix(const gfx::Matrix& matrix);
+    void resetMatrix();
+    void restore();
+    gfx::Matrix matrix() const;
+
     void setDrawMode(DrawMode mode, int param = 0,
                      const gfx::Color a = gfx::ColorNone,
                      const gfx::Color b = gfx::ColorNone);
@@ -65,6 +77,7 @@ namespace ui {
     void drawHLine(gfx::Color color, int x, int y, int w);
     void drawVLine(gfx::Color color, int x, int y, int h);
     void drawLine(gfx::Color color, const gfx::Point& a, const gfx::Point& b);
+    void drawPath(gfx::Path& path, const Paint& paint);
 
     void drawRect(gfx::Color color, const gfx::Rect& rc);
     void fillRect(gfx::Color color, const gfx::Rect& rc);
@@ -83,6 +96,11 @@ namespace ui {
                          const gfx::Rect& dstRect);
     void drawColoredRgbaSurface(os::Surface* surface, gfx::Color color, int x, int y);
     void drawColoredRgbaSurface(os::Surface* surface, gfx::Color color, int srcx, int srcy, int dstx, int dsty, int w, int h);
+    void drawSurfaceNine(os::Surface* surface,
+                         const gfx::Rect& src,
+                         const gfx::Rect& center,
+                         const gfx::Rect& dst,
+                         const Paint* paint = nullptr);
 
     void blit(os::Surface* src, int srcx, int srcy, int dstx, int dsty, int w, int h);
 
@@ -192,7 +210,7 @@ namespace ui {
     DISABLE_COPYING(CheckedDrawMode);
   };
 
-  typedef base::SharedPtr<Graphics> GraphicsPtr;
+  typedef std::shared_ptr<Graphics> GraphicsPtr;
 
 } // namespace ui
 

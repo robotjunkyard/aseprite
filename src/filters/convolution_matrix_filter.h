@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -8,12 +9,10 @@
 #define FILTERS_CONVOLUTION_MATRIX_FILTER_H_INCLUDED
 #pragma once
 
-#include <vector>
-
-#include "base/ints.h"
-#include "base/shared_ptr.h"
 #include "filters/filter.h"
 #include "filters/tiled_mode.h"
+
+#include <memory>
 
 namespace filters {
 
@@ -23,10 +22,10 @@ namespace filters {
   public:
     ConvolutionMatrixFilter();
 
-    void setMatrix(const base::SharedPtr<ConvolutionMatrix>& matrix);
+    void setMatrix(const std::shared_ptr<ConvolutionMatrix>& matrix);
     void setTiledMode(TiledMode tiledMode);
 
-    base::SharedPtr<ConvolutionMatrix> getMatrix() { return m_matrix; }
+    std::shared_ptr<ConvolutionMatrix> getMatrix() { return m_matrix; }
     TiledMode getTiledMode() const { return m_tiledMode; }
 
     // Filter implementation
@@ -36,9 +35,8 @@ namespace filters {
     void applyToIndexed(FilterManager* filterMgr);
 
   private:
-    base::SharedPtr<ConvolutionMatrix> m_matrix;
+    std::shared_ptr<ConvolutionMatrix> m_matrix;
     TiledMode m_tiledMode;
-    std::vector<uint8_t*> m_lines;
   };
 
 } // namespace filters

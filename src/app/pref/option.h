@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,6 +11,10 @@
 
 #include "obs/signal.h"
 #include <string>
+
+#ifdef ENABLE_SCRIPTING
+  #include "app/script/values.h"
+#endif
 
 namespace app {
 
@@ -40,6 +45,12 @@ namespace app {
     virtual ~OptionBase() { }
     const char* section() const { return m_section->name(); }
     const char* id() const { return m_id; }
+
+#ifdef ENABLE_SCRIPTING
+    virtual void pushLua(lua_State* L) = 0;
+    virtual void fromLua(lua_State* L, int index) = 0;
+#endif
+
   protected:
     Section* m_section;
     const char* m_id;
@@ -75,8 +86,13 @@ namespace app {
 
     // Changes the default value and the current one.
     void setValueAndDefault(const T& value) {
+      bool wasDirty = isDirty();
+
       setDefaultValue(value);
       setValue(value);
+
+      if (!wasDirty)
+        cleanDirtyFlag();
     }
 
     const T& defaultValue() const { return m_default; }
@@ -89,8 +105,10 @@ namespace app {
     void cleanDirtyFlag() { m_dirty = false; }
 
     void setValue(const T& newValue) {
-      if (m_value == newValue)
+      if (m_value == newValue) {
+        m_dirty = true;
         return;
+      }
 
       BeforeChange(newValue);
       if (m_section)
@@ -103,6 +121,20 @@ namespace app {
       if (m_section)
         m_section->AfterChange();
     }
+
+    void clearValue() {
+      m_value = m_default;
+      m_dirty = false;
+    }
+
+#ifdef ENABLE_SCRIPTING
+    void pushLua(lua_State* L) override {
+      script::push_value_to_lua<T>(L, m_value);
+    }
+    void fromLua(lua_State* L, int index) override {
+      setValue(script::get_value_from_lua<T>(L, index));
+    }
+#endif
 
     obs::signal<void(const T&)> BeforeChange;
     obs::signal<void(const T&)> AfterChange;

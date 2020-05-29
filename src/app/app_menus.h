@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -49,14 +50,13 @@ namespace app {
     bool rebuildRecentList();
 
     Menu* getRootMenu() { return m_rootMenu.get(); }
-    MenuItem* getRecentListMenuitem() { return m_recentListMenuitem; }
     Menu* getTabPopupMenu() { return m_tabPopupMenu.get(); }
     Menu* getDocumentTabPopupMenu() { return m_documentTabPopupMenu.get(); }
     Menu* getLayerPopupMenu() { return m_layerPopupMenu.get(); }
     Menu* getFramePopupMenu() { return m_framePopupMenu.get(); }
     Menu* getCelPopupMenu() { return m_celPopupMenu.get(); }
     Menu* getCelMovementPopupMenu() { return m_celMovementPopupMenu.get(); }
-    Menu* getFrameTagPopupMenu() { return m_frameTagPopupMenu.get(); }
+    Menu* getTagPopupMenu() { return m_tagPopupMenu.get(); }
     Menu* getSlicePopupMenu() { return m_slicePopupMenu.get(); }
     Menu* getPalettePopupMenu() { return m_palettePopupMenu.get(); }
     Menu* getInkPopupMenu() { return m_inkPopupMenu.get(); }
@@ -65,11 +65,19 @@ namespace app {
                                              const KeyPtr& key);
     void syncNativeMenuItemKeyShortcuts();
 
+    // Menu item handling in groups
+    void addMenuItemIntoGroup(const std::string& groupId,
+                              std::unique_ptr<MenuItem>&& menuItem);
+    void removeMenuItemFromGroup(Command* cmd);
+    void removeMenuItemFromGroup(Widget* menuItem);
+
   private:
+    template<typename Pred>
+    void removeMenuItemFromGroup(Pred pred);
+
     Menu* loadMenuById(TiXmlHandle& handle, const char *id);
     Menu* convertXmlelemToMenu(TiXmlElement* elem);
     Widget* convertXmlelemToMenuitem(TiXmlElement* elem);
-    Widget* createInvalidVersionMenuitem();
     void applyShortcutToMenuitemsWithCommand(Menu* menu, Command* command, const Params& params,
                                              const KeyPtr& key);
     void syncNativeMenuItemKeyShortcuts(Menu* menu);
@@ -83,8 +91,13 @@ namespace app {
                             const bool rootLevel);
 #endif
 
+    struct GroupInfo {
+      Widget* end = nullptr;
+      WidgetsList items;
+    };
+
     std::unique_ptr<Menu> m_rootMenu;
-    MenuItem* m_recentListMenuitem;
+    Widget* m_recentFilesPlaceholder;
     MenuItem* m_helpMenuitem;
     std::unique_ptr<Menu> m_tabPopupMenu;
     std::unique_ptr<Menu> m_documentTabPopupMenu;
@@ -92,12 +105,19 @@ namespace app {
     std::unique_ptr<Menu> m_framePopupMenu;
     std::unique_ptr<Menu> m_celPopupMenu;
     std::unique_ptr<Menu> m_celMovementPopupMenu;
-    std::unique_ptr<Menu> m_frameTagPopupMenu;
+    std::unique_ptr<Menu> m_tagPopupMenu;
     std::unique_ptr<Menu> m_slicePopupMenu;
     std::unique_ptr<Menu> m_palettePopupMenu;
     std::unique_ptr<Menu> m_inkPopupMenu;
     obs::scoped_connection m_recentFilesConn;
     std::vector<Menu*> m_menus;
+    // List of recent menu items pointing to recent files.
+    WidgetsList m_recentMenuItems;
+    // Extension points for plugins (each group is a place where new
+    // menu items can be added).
+    std::map<std::string, GroupInfo> m_groups;
+    // Native main menu bar (== nullptr if the platform doesn't
+    // support native menus)
     os::Menu* m_osMenu;
     XmlTranslator m_xmlTranslator;
   };

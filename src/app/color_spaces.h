@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2019  Igara Studio S.A.
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -19,6 +19,9 @@ namespace doc {
 }
 
 namespace app {
+  class Preferences;
+
+  void initialize_color_spaces(Preferences& pref);
 
   os::ColorSpacePtr get_screen_color_space();
 

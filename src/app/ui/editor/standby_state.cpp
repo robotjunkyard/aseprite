@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -56,6 +56,7 @@
 #include "doc/slice.h"
 #include "doc/sprite.h"
 #include "fixmath/fixmath.h"
+#include "fmt/format.h"
 #include "gfx/rect.h"
 #include "os/surface.h"
 #include "os/system.h"
@@ -190,12 +191,12 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
           "The background layer cannot be moved");
       }
       else if (!layer->isVisibleHierarchy()) {
-        StatusBar::instance()->showTip(1000,
-          "Layer '%s' is hidden", layer->name().c_str());
+        StatusBar::instance()->showTip(
+          1000, fmt::format("Layer '{}' is hidden", layer->name()));
       }
       else if (!layer->isMovable() || !layer->isEditableHierarchy()) {
-        StatusBar::instance()->showTip(1000,
-          "Layer '%s' is locked", layer->name().c_str());
+        StatusBar::instance()->showTip(
+          1000, fmt::format("Layer '{}' is locked", layer->name()));
       }
       else {
         MovingCelCollect collect(editor, layer);
@@ -239,14 +240,29 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
       case EditorHit::SliceBounds:
       case EditorHit::SliceCenter:
         if (msg->left()) {
-          MovingSliceState* newState = new MovingSliceState(editor, msg, hit);
+          // If we click outside all slices, we clear the selection of slices.
+          if (!hit.slice() || !site.selectedSlices().contains(hit.slice()->id())) {
+            editor->clearSlicesSelection();
+            editor->selectSlice(hit.slice());
+
+            site = Site();
+            editor->getSite(&site);
+          }
+
+          MovingSliceState* newState = new MovingSliceState(
+            editor, msg, hit, site.selectedSlices());
           editor->setState(EditorStatePtr(newState));
         }
         else {
           Menu* popupMenu = AppMenus::instance()->getSlicePopupMenu();
           if (popupMenu) {
             Params params;
-            params.set("id", base::convert_to<std::string>(hit.slice()->id()).c_str());
+            // When the editor doesn't have a set of selected slices,
+            // we set the specific clicked slice for the commands (in
+            // other case, those commands will get the selected set of
+            // slices from Site::selectedSlices() field).
+            if (!editor->hasSelectedSlices())
+              params.set("id", base::convert_to<std::string>(hit.slice()->id()).c_str());
             AppMenuItem::setContextParams(params);
             popupMenu->showPopup(msg->position());
             AppMenuItem::setContextParams(Params());
@@ -284,8 +300,8 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
         Image* image = site.image(&x, &y, &opacity);
         if (layer && image) {
           if (!layer->isEditableHierarchy()) {
-            StatusBar::instance()->showTip(1000,
-              "Layer '%s' is locked", layer->name().c_str());
+            StatusBar::instance()->showTip(
+              1000, fmt::format("Layer '{}' is locked", layer->name()));
             return true;
           }
 
@@ -305,8 +321,8 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
     // Move selected pixels
     if (layer && editor->canStartMovingSelectionPixels() && msg->left()) {
       if (!layer->isEditableHierarchy()) {
-        StatusBar::instance()->showTip(1000,
-          "Layer '%s' is locked", layer->name().c_str());
+        StatusBar::instance()->showTip(
+          1000, fmt::format("Layer '{}' is locked", layer->name()));
         return true;
       }
 
@@ -380,19 +396,26 @@ bool StandbyState::onDoubleClick(Editor* editor, MouseMessage* msg)
   // Select a tile with double-click
   if (ink->isSelection() &&
       Preferences::instance().selection.doubleclickSelectTile()) {
-    Command* selectTileCmd =
-      Commands::instance()->byId(CommandId::SelectTile());
+    // Drop pixels if we are in moving pixels state
+    if (dynamic_cast<MovingPixelsState*>(editor->getState().get()))
+      editor->backToPreviousState();
 
-    Params params;
-    if (int(editor->getToolLoopModifiers()) & int(tools::ToolLoopModifiers::kAddSelection))
-      params.set("mode", "add");
-    else if (int(editor->getToolLoopModifiers()) & int(tools::ToolLoopModifiers::kSubtractSelection))
-      params.set("mode", "subtract");
-    else if (int(editor->getToolLoopModifiers()) & int(tools::ToolLoopModifiers::kIntersectSelection))
-      params.set("mode", "intersect");
-
-    UIContext::instance()->executeCommand(selectTileCmd, params);
+    // Start a tool-loop selecting tiles.
+    startDrawingState(editor,
+                      DrawingType::SelectTiles,
+                      pointer_from_msg(editor, msg));
     return true;
+  }
+  // Show slice properties when we double-click it
+  else if (ink->isSlice()) {
+    EditorHit hit = editor->calcHit(msg->position());
+    if (hit.slice()) {
+      Command* cmd = Commands::instance()->byId(CommandId::SliceProperties());
+      Params params;
+      params.set("id", base::convert_to<std::string>(hit.slice()->id()).c_str());
+      UIContext::instance()->executeCommandFromMenuOrShortcut(cmd, params);
+      return true;
+    }
   }
 
   return false;
@@ -570,11 +593,12 @@ bool StandbyState::onUpdateStatusBar(Editor* editor)
     }
 
     if (editor->docPref().show.grid()) {
-      auto gb = editor->docPref().grid.bounds();
-      int col = int((std::floor(spritePos.x) - (gb.x % gb.w)) / gb.w);
-      int row = int((std::floor(spritePos.y) - (gb.y % gb.h)) / gb.h);
-      sprintf(
-        buf+std::strlen(buf), " :grid: %d %d", col, row);
+      auto gb = sprite->gridBounds();
+      if (!gb.isEmpty()) {
+        int col = int((std::floor(spritePos.x) - (gb.x % gb.w)) / gb.w);
+        int row = int((std::floor(spritePos.y) - (gb.y % gb.h)) / gb.h);
+        sprintf(buf+std::strlen(buf), " :grid: %d %d", col, row);
+      }
     }
 
     if (editor->docPref().show.slices()) {
@@ -604,9 +628,10 @@ bool StandbyState::onUpdateStatusBar(Editor* editor)
   return true;
 }
 
-DrawingState* StandbyState::startDrawingState(Editor* editor,
-                                              const DrawingType drawingType,
-                                              const tools::Pointer& pointer)
+DrawingState* StandbyState::startDrawingState(
+  Editor* editor,
+  const DrawingType drawingType,
+  const tools::Pointer& pointer)
 {
   // We need to clear and redraw the brush boundaries after the
   // first mouse pressed/point shape if drawn. This is to avoid
@@ -618,7 +643,8 @@ DrawingState* StandbyState::startDrawingState(Editor* editor,
     editor,
     UIContext::instance(),
     pointer.button(),
-    (drawingType == DrawingType::LineFreehand));
+    (drawingType == DrawingType::LineFreehand),
+    (drawingType == DrawingType::SelectTiles));
   if (!toolLoop)
     return nullptr;
 
@@ -639,7 +665,8 @@ bool StandbyState::checkStartDrawingStraightLine(Editor* editor,
                                                  const ui::MouseMessage* msg)
 {
   // Start line preview with shift key
-  if (editor->startStraightLineWithFreehandTool(msg)) {
+  if (canCheckStartDrawingStraightLine() &&
+      editor->startStraightLineWithFreehandTool(msg)) {
     tools::Pointer::Button pointerButton =
       (msg ? button_from_msg(msg): tools::Pointer::Left);
 
@@ -648,13 +675,19 @@ bool StandbyState::checkStartDrawingStraightLine(Editor* editor,
                         DrawingType::LineFreehand,
                         tools::Pointer(
                           editor->document()->lastDrawingPoint(),
-                          pointerButton));
+                          tools::Vec2(0.0f, 0.0f),
+                          pointerButton,
+                          msg ? msg->pointerType(): PointerType::Unknown,
+                          msg ? msg->pressure(): 0.0f));
     if (drawingState) {
       drawingState->sendMovementToToolLoop(
         tools::Pointer(
           editor->screenToEditor(msg ? msg->position():
                                        ui::get_mouse_position()),
-          pointerButton));
+          tools::Vec2(0.0f, 0.0f),
+          pointerButton,
+          msg ? msg->pointerType(): tools::Pointer::Type::Unknown,
+          msg ? msg->pressure(): 0.0f));
       return true;
     }
   }
@@ -709,8 +742,8 @@ void StandbyState::transformSelection(Editor* editor, MouseMessage* msg, HandleT
   Layer* layer = editor->layer();
   if (layer && layer->isReference()) {
     StatusBar::instance()->showTip(
-      1000, "Layer '%s' is reference, cannot be transformed",
-      layer->name().c_str());
+      1000, fmt::format("Layer '{}' is reference, cannot be transformed",
+                        layer->name()));
     return;
   }
 
@@ -720,7 +753,8 @@ void StandbyState::transformSelection(Editor* editor, MouseMessage* msg, HandleT
     editor->brushPreview().hide();
 
     EditorCustomizationDelegate* customization = editor->getCustomizationDelegate();
-    std::unique_ptr<Image> tmpImage(new_image_from_mask(editor->getSite()));
+    std::unique_ptr<Image> tmpImage(new_image_from_mask(editor->getSite(),
+                                                        Preferences::instance().experimental.newBlend()));
 
     PixelsMovementPtr pixelsMovement(
       new PixelsMovement(UIContext::instance(),
@@ -798,13 +832,13 @@ bool StandbyState::overSelectionEdges(Editor* editor,
   if (Preferences::instance().selection.moveEdges() &&
       editor->isActive() &&
       editor->document()->isMaskVisible() &&
-      editor->document()->getMaskBoundaries() &&
+      editor->document()->hasMaskBoundaries() &&
       // TODO improve this check, how we can know that we aren't in the MovingPixelsState
       !dynamic_cast<MovingPixelsState*>(editor->getState().get())) {
     gfx::Point mainOffset(editor->mainTilePosition());
 
     // For each selection edge
-    for (const auto& seg : *editor->document()->getMaskBoundaries()) {
+    for (const auto& seg : editor->document()->maskBoundaries()) {
       gfx::Rect segBounds = seg.bounds();
       segBounds.offset(mainOffset);
       segBounds = editor->editorToScreen(segBounds);

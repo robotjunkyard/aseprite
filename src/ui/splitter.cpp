@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -10,6 +11,7 @@
 
 #include "ui/splitter.h"
 
+#include "base/clamp.h"
 #include "ui/load_layout_event.h"
 #include "ui/manager.h"
 #include "ui/message.h"
@@ -20,6 +22,7 @@
 #include "ui/system.h"
 #include "ui/theme.h"
 
+#include <algorithm>
 #include <sstream>
 
 namespace ui {
@@ -58,10 +61,15 @@ bool Splitter::onProcessMessage(Message* msg)
 
         bar = click_bar = 0;
 
-        UI_FOREACH_WIDGET_WITH_END(children(), it, end) {
-          if (it+1 != end) {
+        for (auto it=children().begin(),
+               end=children().end();
+               it != end; ) {
+          auto next = it;
+          ++next;
+
+          if (next != end) {
             c1 = *it;
-            c2 = *(it+1);
+            c2 = *next;
 
             ++bar;
 
@@ -82,6 +90,8 @@ bool Splitter::onProcessMessage(Message* msg)
                 (mousePos.y >= y1) && (mousePos.y < y2))
               click_bar = bar;
           }
+
+          it = next;
         }
 
         if (!click_bar)
@@ -139,8 +149,13 @@ bool Splitter::onProcessMessage(Message* msg)
         int x1, y1, x2, y2;
         bool change_cursor = false;
 
-        UI_FOREACH_WIDGET_WITH_END(children(), it, end) {
-          if (it+1 != end) {
+        for (auto it=children().begin(),
+               end=children().end();
+               it != end; ) {
+          auto next = it;
+          ++next;
+
+          if (next != end) {
             c1 = *it;
             c2 = *(it+1);
 
@@ -163,6 +178,8 @@ bool Splitter::onProcessMessage(Message* msg)
               break;
             }
           }
+
+          it = next;
         }
 
         if (change_cursor) {
@@ -207,7 +224,7 @@ void Splitter::onResize(ResizeEvent& ev)
     }                                                                   \
                                                                         \
     /* TODO uncomment this to make a restricted splitter */             \
-    /* pos.w = MID(reqSize1.w, pos.w, avail-reqSize2.w); */             \
+    /* pos.w = base::clamp(pos.w, reqSize1.w, avail-reqSize2.w); */     \
     pos.h = rc.h;                                                       \
                                                                         \
     child1->setBounds(pos);                                             \
@@ -247,10 +264,10 @@ void Splitter::onResize(ResizeEvent& ev)
 
 void Splitter::onSizeHint(SizeHintEvent& ev)
 {
-#define GET_CHILD_SIZE(w, h)                    \
-  do {                                          \
-    w = MAX(w, reqSize.w);                      \
-    h = MAX(h, reqSize.h);                      \
+#define GET_CHILD_SIZE(w, h)                         \
+  do {                                               \
+    w = std::max(w, reqSize.w);                      \
+    h = std::max(h, reqSize.h);                      \
   } while(0)
 
 #define FINAL_SIZE(w)                                     \
@@ -338,22 +355,22 @@ void Splitter::limitPos()
   if (align() & HORIZONTAL) {
     switch (m_type) {
       case ByPercentage:
-        m_pos = MID(0, m_pos, 100);
+        m_pos = base::clamp<double>(m_pos, 0, 100);
         break;
       case ByPixel:
         if (isVisible())
-          m_pos = MID(0, m_pos, bounds().w);
+          m_pos = base::clamp<double>(m_pos, 0, bounds().w);
         break;
     }
   }
   else {
     switch (m_type) {
       case ByPercentage:
-        m_pos = MID(0, m_pos, 100);
+        m_pos = base::clamp<double>(m_pos, 0, 100);
         break;
       case ByPixel:
         if (isVisible())
-          m_pos = MID(0, m_pos, bounds().h);
+          m_pos = base::clamp<double>(m_pos, 0, bounds().h);
         break;
     }
   }

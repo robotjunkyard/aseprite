@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2016-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -12,9 +13,9 @@
 
 #include "app/doc.h"
 #include "app/file/file.h"
-#include "doc/frame_tag.h"
-#include "doc/frame_tags.h"
 #include "doc/sprite.h"
+#include "doc/tag.h"
+#include "doc/tags.h"
 
 namespace app {
 
@@ -32,6 +33,7 @@ CliOpenFile::CliOpenFile()
   listSlices = false;
   ignoreEmpty = false;
   trim = false;
+  trimByGrid = false;
   oneFrame = false;
   crop = gfx::Rect();
 }
@@ -46,7 +48,7 @@ FileOpROI CliOpenFile::roi() const
 
   return FileOpROI(document,
                    slice,
-                   frameTag,
+                   tag,
                    selFrames,
                    true);
 }

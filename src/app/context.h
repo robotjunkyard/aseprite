@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -16,16 +16,25 @@
 #include "app/docs_observer.h"
 #include "base/disable_copying.h"
 #include "base/exception.h"
+#include "doc/frame.h"
 #include "obs/observable.h"
 #include "obs/signal.h"
 
+#include <memory>
 #include <vector>
 
+namespace doc {
+  class Layer;
+  class PalettePicks;
+}
+
 namespace app {
+  class ActiveSiteHandler;
   class Command;
   class Doc;
+  class DocRange;
   class DocView;
-  class Transaction;
+  class Preferences;
 
   class CommandPreconditionException : public base::Exception {
   public:
@@ -62,6 +71,8 @@ namespace app {
     const Docs& documents() const { return m_docs; }
     Docs& documents() { return m_docs; }
 
+    Preferences& preferences() const;
+
     virtual bool isUIAvailable() const     { return false; }
     virtual bool isRecordingMacro() const  { return false; }
     virtual bool isExecutingMacro() const  { return false; }
@@ -70,24 +81,25 @@ namespace app {
     bool checkFlags(uint32_t flags) const { return m_flags.check(flags); }
     void updateFlags() { m_flags.update(this); }
 
-    void sendDocumentToTop(Doc* document);
+    void sendDocumentToTop(Doc* doc);
+    void closeDocument(Doc* doc);
 
     Site activeSite() const;
     Doc* activeDocument() const;
     void setActiveDocument(Doc* document);
+    void setActiveLayer(doc::Layer* layer);
+    void setActiveFrame(doc::frame_t frame);
+    void setRange(const DocRange& range);
+    void setSelectedColors(const doc::PalettePicks& picks);
     bool hasModifiedDocuments() const;
     void notifyActiveSiteChanged();
 
-    void executeCommand(const char* commandName);
+    void executeCommandFromMenuOrShortcut(Command* command, const Params& params = Params());
     virtual void executeCommand(Command* command, const Params& params = Params());
 
     virtual DocView* getFirstDocView(Doc* document) const {
       return nullptr;
     }
-
-    // Sets active/running transaction.
-    void setTransaction(Transaction* transaction);
-    Transaction* transaction() { return m_transaction; }
 
     obs::signal<void (CommandExecutionEvent&)> BeforeCommandExecution;
     obs::signal<void (CommandExecutionEvent&)> AfterCommandExecution;
@@ -99,14 +111,22 @@ namespace app {
 
     virtual void onGetActiveSite(Site* site) const;
     virtual void onSetActiveDocument(Doc* doc);
+    virtual void onSetActiveLayer(doc::Layer* layer);
+    virtual void onSetActiveFrame(const doc::frame_t frame);
+    virtual void onSetRange(const DocRange& range);
+    virtual void onSetSelectedColors(const doc::PalettePicks& picks);
+    virtual void onCloseDocument(Doc* doc);
 
     Doc* lastSelectedDoc() { return m_lastSelectedDoc; }
 
   private:
-    Docs m_docs;
+    ActiveSiteHandler* activeSiteHandler() const;
+
+    mutable Docs m_docs;
     ContextFlags m_flags;       // Last updated flags.
     Doc* m_lastSelectedDoc;
-    Transaction* m_transaction;
+    mutable std::unique_ptr<ActiveSiteHandler> m_activeSiteHandler;
+    mutable std::unique_ptr<Preferences> m_preferences;
 
     DISABLE_COPYING(Context);
   };

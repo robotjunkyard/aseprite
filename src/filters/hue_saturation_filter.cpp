@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2017-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,8 +11,10 @@
 
 #include "filters/hue_saturation_filter.h"
 
+#include "base/clamp.h"
 #include "doc/image.h"
 #include "doc/palette.h"
+#include "doc/palette_picks.h"
 #include "doc/rgbmap.h"
 #include "filters/filter_indexed_data.h"
 #include "filters/filter_manager.h"
@@ -31,7 +34,7 @@ const char* HueSaturationFilter::getName()
 }
 
 HueSaturationFilter::HueSaturationFilter()
-  : m_mode(Mode::HSL)
+  : m_mode(Mode::HSL_MUL)
   , m_h(0.0)
   , m_s(0.0)
   , m_l(0.0)
@@ -67,15 +70,8 @@ void HueSaturationFilter::setAlpha(double a)
 void HueSaturationFilter::applyToRgba(FilterManager* filterMgr)
 {
   FilterIndexedData* fid = filterMgr->getIndexedData();
-
-  if (filterMgr->isFirstRow()) {
-    m_picks = fid->getPalettePicks();
-    m_usePalette = (m_picks.picks() > 0);
-    if (m_usePalette)
-      applyToPalette(filterMgr);
-  }
-
   const Palette* pal = fid->getPalette();
+  Palette* newPal = (m_usePaletteOnRGB ? fid->getNewPalette(): nullptr);
   const uint32_t* src_address = (uint32_t*)filterMgr->getSourceAddress();
   uint32_t* dst_address = (uint32_t*)filterMgr->getDestinationAddress();
   const int w = filterMgr->getWidth();
@@ -90,14 +86,14 @@ void HueSaturationFilter::applyToRgba(FilterManager* filterMgr)
 
     color_t c = *(src_address++);
 
-    if (m_usePalette) {
+    if (newPal) {
       int i =
         pal->findExactMatch(rgba_getr(c),
                             rgba_getg(c),
                             rgba_getb(c),
                             rgba_geta(c), -1);
       if (i >= 0)
-        c = fid->getNewPalette()->getEntry(i);
+        c = newPal->getEntry(i);
     }
     else {
       applyFilterToRgb(target, c);
@@ -129,7 +125,7 @@ void HueSaturationFilter::applyToGrayscale(FilterManager* filterMgr)
       gfx::Hsl hsl(gfx::Rgb(k, k, k));
 
       double l = hsl.lightness()*(1.0+m_l);
-      l = MID(0.0, l, 1.0);
+      l = base::clamp(l, 0.0, 1.0);
 
       hsl.lightness(l);
       gfx::Rgb rgb(hsl);
@@ -138,7 +134,7 @@ void HueSaturationFilter::applyToGrayscale(FilterManager* filterMgr)
 
       if (a && (target & TARGET_ALPHA_CHANNEL)) {
         a = a*(1.0+m_a);
-        a = MID(0, a, 255);
+        a = base::clamp(a, 0, 255);
       }
     }
 
@@ -148,22 +144,14 @@ void HueSaturationFilter::applyToGrayscale(FilterManager* filterMgr)
 
 void HueSaturationFilter::applyToIndexed(FilterManager* filterMgr)
 {
-  FilterIndexedData* fid = filterMgr->getIndexedData();
-
-  // Apply filter to color palette if there is no selection
-  if (!filterMgr->isMaskActive()) {
-    if (!filterMgr->isFirstRow())
-      return;
-
-    m_picks = fid->getPalettePicks();
-    if (m_picks.picks() == 0)
-      m_picks.all();
-
-    applyToPalette(filterMgr);
+  // Apply filter to pixels if there is selection (in other case, the
+  // change is global, so we have already applied the filter to the
+  // palette).
+  if (!filterMgr->isMaskActive())
     return;
-  }
 
   // Apply filter to color region
+  FilterIndexedData* fid = filterMgr->getIndexedData();
   const Target target = filterMgr->getTarget();
   const Palette* pal = fid->getPalette();
   const RgbMap* rgbmap = fid->getRgbMap();
@@ -187,15 +175,16 @@ void HueSaturationFilter::applyToIndexed(FilterManager* filterMgr)
   }
 }
 
-void HueSaturationFilter::applyToPalette(FilterManager* filterMgr)
+void HueSaturationFilter::onApplyToPalette(FilterManager* filterMgr,
+                                           const PalettePicks& picks)
 {
-  const Target target = filterMgr->getTarget();
   FilterIndexedData* fid = filterMgr->getIndexedData();
+  const Target target = filterMgr->getTarget();
   const Palette* pal = fid->getPalette();
   Palette* newPal = fid->getNewPalette();
 
   int i = 0;
-  for (bool state : m_picks) {
+  for (bool state : picks) {
     if (!state) {
       ++i;
       continue;
@@ -211,7 +200,9 @@ void HueSaturationFilter::applyToPalette(FilterManager* filterMgr)
 template<class T,
          double (T::*get_lightness)() const,
          void (T::*set_lightness)(double)>
-void HueSaturationFilter::applyFilterToRgbT(const Target target, doc::color_t& c)
+void HueSaturationFilter::applyFilterToRgbT(const Target target,
+                                            doc::color_t& c,
+                                            bool multiply)
 {
   int r = rgba_getr(c);
   int g = rgba_getg(c);
@@ -224,11 +215,13 @@ void HueSaturationFilter::applyFilterToRgbT(const Target target, doc::color_t& c
   while (h < 0.0) h += 360.0;
   h = std::fmod(h, 360.0);
 
-  double s = hsl.saturation()*(1.0+m_s);
-  s = MID(0.0, s, 1.0);
+  double s = (multiply ? hsl.saturation()*(1.0+m_s):
+                         hsl.saturation() + m_s);
+  s = base::clamp(s, 0.0, 1.0);
 
-  double l = (hsl.*get_lightness)()*(1.0+m_l);
-  l = MID(0.0, l, 1.0);
+  double l = (multiply ? (hsl.*get_lightness)()*(1.0+m_l):
+                         (hsl.*get_lightness)() + m_l);
+  l = base::clamp(l, 0.0, 1.0);
 
   hsl.hue(h);
   hsl.saturation(s);
@@ -240,7 +233,7 @@ void HueSaturationFilter::applyFilterToRgbT(const Target target, doc::color_t& c
   if (target & TARGET_BLUE_CHANNEL ) b = rgb.blue();
   if (a && (target & TARGET_ALPHA_CHANNEL)) {
     a = a*(1.0+m_a);
-    a = MID(0, a, 255);
+    a = base::clamp(a, 0, 255);
   }
 
   c = rgba(r, g, b, a);
@@ -249,15 +242,25 @@ void HueSaturationFilter::applyFilterToRgbT(const Target target, doc::color_t& c
 void HueSaturationFilter::applyFilterToRgb(const Target target, doc::color_t& color)
 {
   switch (m_mode) {
-    case Mode::HSL:
-      applyFilterToRgbT<gfx::Hsl,
-                        &gfx::Hsl::lightness,
-                        &gfx::Hsl::lightness>(target, color);
-      break;
-    case Mode::HSV:
+    case Mode::HSV_MUL:
       applyFilterToRgbT<gfx::Hsv,
                         &gfx::Hsv::value,
-                        &gfx::Hsv::value>(target, color);
+                        &gfx::Hsv::value>(target, color, true);
+      break;
+    case Mode::HSL_MUL:
+      applyFilterToRgbT<gfx::Hsl,
+                        &gfx::Hsl::lightness,
+                        &gfx::Hsl::lightness>(target, color, true);
+      break;
+    case Mode::HSV_ADD:
+      applyFilterToRgbT<gfx::Hsv,
+                        &gfx::Hsv::value,
+                        &gfx::Hsv::value>(target, color, false);
+      break;
+    case Mode::HSL_ADD:
+      applyFilterToRgbT<gfx::Hsl,
+                        &gfx::Hsl::lightness,
+                        &gfx::Hsl::lightness>(target, color, false);
       break;
   }
 }

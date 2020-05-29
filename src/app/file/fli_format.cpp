@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -14,11 +14,13 @@
 #include "app/file/file_format.h"
 #include "app/file/format_options.h"
 #include "app/modules/palettes.h"
+#include "app/pref/preferences.h"
 #include "base/file_handle.h"
 #include "doc/doc.h"
 #include "flic/flic.h"
 #include "render/render.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace app {
@@ -75,8 +77,13 @@ bool FliFormat::onLoad(FileOp* fop)
   }
 
   // Size by frame
-  int w = header.width;
-  int h = header.height;
+  const int w = header.width;
+  const int h = header.height;
+  ASSERT(w > 0 && h > 0); // The decoder cannot return invalid widht/height values
+  if (w > 10000 || h > 10000) {
+    fop->setError("Image size too big: %dx%d not suported\n", w, h);
+    return false;
+  }
 
   // Create a temporal bitmap
   ImageRef bmp(Image::create(IMAGE_INDEXED, w, h));
@@ -137,8 +144,7 @@ bool FliFormat::onLoad(FileOp* fop)
       ++frame_out;
     }
     else if (palChange) {
-      Cel* cel = Cel::createLink(prevCel);
-      cel->setFrame(frame_out);
+      Cel* cel = Cel::MakeLink(frame_out, prevCel);
       layer->addCel(cel);
 
       ++frame_out;
@@ -217,6 +223,7 @@ bool FliFormat::onSave(FileOp* fop)
   // Create the bitmaps
   ImageRef bmp(Image::create(IMAGE_INDEXED, sprite->width(), sprite->height()));
   render::Render render;
+  render.setNewBlend(fop->newBlend());
 
   // Write frame by frame
   flic::Frame fliFrame;
@@ -233,7 +240,7 @@ bool FliFormat::onSave(FileOp* fop)
 
     frame_t frame = *frame_it;
     const Palette* pal = sprite->palette(frame);
-    int size = MIN(256, pal->size());
+    int size = std::min(256, pal->size());
 
     for (int c=0; c<size; c++) {
       color_t color = pal->getEntry(c);
@@ -249,7 +256,7 @@ bool FliFormat::onSave(FileOp* fop)
     // time that it has in the sprite
     if (f < nframes) {
       int times = sprite->frameDuration(frame) / header.speed;
-      times = MAX(1, times);
+      times = std::max(1, times);
       for (int c=0; c<times; c++)
         encoder.writeFrame(fliFrame);
     }

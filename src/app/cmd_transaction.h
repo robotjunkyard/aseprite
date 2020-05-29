@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -24,8 +25,13 @@ namespace app {
     CmdTransaction(const std::string& label,
       bool changeSavedState, int* savedCounter);
 
+    // Moves the CmdTransaction internals to a new copy in case that
+    // we want to rollback this CmdTransaction and start again with
+    // the new CmdTransaction.
+    CmdTransaction* moveToEmptyCopy();
+
     void setNewDocRange(const DocRange& range);
-    void commit();
+    void updateSpritePositionAfter();
 
     SpritePosition spritePositionBeforeExecute() const { return m_spritePositionBefore; }
     SpritePosition spritePositionAfterExecute() const { return m_spritePositionAfter; }

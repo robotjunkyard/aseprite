@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -27,6 +27,7 @@
 #include "base/bind.h"
 #include "base/chrono.h"
 #include "base/convert_to.h"
+#include "base/scoped_value.h"
 #include "doc/image.h"
 #include "doc/mask.h"
 #include "doc/sprite.h"
@@ -70,11 +71,11 @@ private:
     }
   };
 
-  Window* m_window; // TODO we cannot use a std::unique_ptr because clone() needs a copy ctor
-  ColorButton* m_buttonColor;
-  CheckBox* m_checkPreview;
-  Slider* m_sliderTolerance;
-  SelModeField* m_selMode;
+  Window* m_window = nullptr;
+  ColorButton* m_buttonColor = nullptr;
+  CheckBox* m_checkPreview = nullptr;
+  Slider* m_sliderTolerance = nullptr;
+  SelModeField* m_selMode = nullptr;
 };
 
 MaskByColorCommand::MaskByColorCommand()
@@ -91,6 +92,8 @@ bool MaskByColorCommand::onEnabled(Context* context)
 
 void MaskByColorCommand::onExecute(Context* context)
 {
+  ASSERT(!m_window);
+
   const ContextReader reader(context);
   const Sprite* sprite = reader.sprite();
 
@@ -102,7 +105,8 @@ void MaskByColorCommand::onExecute(Context* context)
   if (!image)
     return;
 
-  m_window = new Window(Window::WithTitleBar, "Mask by Color");
+  std::unique_ptr<Window> win(new Window(Window::WithTitleBar, "Mask by Color"));
+  base::ScopedValue<Window*> setWindow(m_window, win.get(), nullptr);
   TooltipManager* tooltipManager = new TooltipManager();
   m_window->addChild(tooltipManager);
   auto box1 = new Box(VERTICAL);
@@ -134,7 +138,6 @@ void MaskByColorCommand::onExecute(Context* context)
 
   button_ok->Click.connect(base::Bind<void>(&Window::closeWindow, m_window, button_ok));
   button_cancel->Click.connect(base::Bind<void>(&Window::closeWindow, m_window, button_cancel));
-
 
   m_buttonColor->Change.connect(base::Bind<void>(&MaskByColorCommand::maskPreview, this, base::Ref(reader)));
   m_sliderTolerance->Change.connect(base::Bind<void>(&MaskByColorCommand::maskPreview, this, base::Ref(reader)));
@@ -189,14 +192,15 @@ void MaskByColorCommand::onExecute(Context* context)
     set_config_int("MaskColor", "Tolerance", m_sliderTolerance->getValue());
     set_config_bool("MaskColor", "Preview", m_checkPreview->isSelected());
   }
+  else {
+    document->generateMaskBoundaries();
+  }
 
   // Update boundaries and editors.
-  document->generateMaskBoundaries();
   update_screen_for_document(document);
 
   // Save window configuration.
   save_window_pos(m_window, "MaskColor");
-  delete m_window;
 }
 
 Mask* MaskByColorCommand::generateMask(const Mask& origMask,
@@ -205,7 +209,8 @@ Mask* MaskByColorCommand::generateMask(const Mask& origMask,
                                        int xpos, int ypos,
                                        gen::SelectionMode mode)
 {
-  int color = color_utils::color_for_image(m_buttonColor->getColor(), sprite->pixelFormat());
+  int color = color_utils::color_for_image(m_buttonColor->getColor(),
+                                           sprite->pixelFormat());
   int tolerance = m_sliderTolerance->getValue();
 
   std::unique_ptr<Mask> mask(new Mask());
@@ -242,7 +247,8 @@ Mask* MaskByColorCommand::generateMask(const Mask& origMask,
 
 void MaskByColorCommand::maskPreview(const ContextReader& reader)
 {
-  if (m_checkPreview->isSelected()) {
+  ASSERT(m_window);
+  if (m_window && m_checkPreview->isSelected()) {
     int xpos, ypos;
     const Image* image = reader.image(&xpos, &ypos);
     std::unique_ptr<Mask> mask(generateMask(*reader.document()->mask(),

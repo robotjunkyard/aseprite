@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -14,7 +14,7 @@
 #include "app/ui/editor/standby_state.h"
 #include "gfx/fwd.h"
 #include "ui/cursor_type.h"
-#include "ui/mouse_buttons.h"
+#include "ui/mouse_button.h"
 
 #include <string>
 #include <vector>
@@ -32,7 +32,7 @@ namespace app {
 
     // Called only in QUICKBOX mode, when the user released the mouse
     // button.
-    virtual void onQuickboxEnd(Editor* editor, const gfx::Rect& rect, ui::MouseButtons buttons) { }
+    virtual void onQuickboxEnd(Editor* editor, const gfx::Rect& rect, ui::MouseButton button) { }
     virtual void onQuickboxCancel(Editor* editor) { }
 
     // Help text to be shown in the ContextBar
@@ -95,28 +95,36 @@ namespace app {
     virtual bool onMouseUp(Editor* editor, ui::MouseMessage* msg) override;
     virtual bool onMouseMove(Editor* editor, ui::MouseMessage* msg) override;
     virtual bool onSetCursor(Editor* editor, const gfx::Point& mouseScreenPos) override;
+    virtual bool onKeyDown(Editor* editor, ui::KeyMessage* msg) override;
     virtual bool acceptQuickTool(tools::Tool* tool) override;
     virtual bool requireBrushPreview() override;
-    virtual tools::Ink* getStateInk() override;
+    virtual tools::Ink* getStateInk() const override;
 
     // EditorDecorator overrides
     virtual void postRenderDecorator(EditorPostRender* render) override;
     virtual void getInvalidDecoratoredRegion(Editor* editor, gfx::Region& region) override;
 
+    // Disable Shift+click to draw straight lines with the Pencil tool
+    bool canCheckStartDrawingStraightLine() override { return false; }
+
   private:
     typedef std::vector<Ruler> Rulers;
 
     void updateContextBar();
+    Ruler& oppositeRuler(const int rulerIndex);
 
     // This returns a ui align value (e.g. LEFT for the ruler)
     int hitTestRulers(Editor* editor,
                       const gfx::Point& mousePos,
                       const bool updateMovingRulers);
 
-    // Returns true if the position screen position (x, y) is touching
-    // the given ruler.
-    bool hitTestRuler(Editor* editor, const Ruler& ruler,
-                      const gfx::Point& mousePos);
+    // Returns 0 if the mouse position on screen (mousePos) is not
+    // touching any ruler, or in other case returns the alignment of
+    // the ruler being touch (useful to show a proper mouse cursor).
+    int hitTestRuler(Editor* editor,
+                     const Ruler& ruler,
+                     const Ruler& oppRuler,
+                     const gfx::Point& mousePos);
 
     ui::CursorType cursorFromAlign(const int align) const;
 
@@ -128,7 +136,7 @@ namespace app {
     int m_rulersDragAlign;      // Used to calculate the correct mouse cursor
     std::vector<int> m_movingRulers;
     bool m_selectingBox;
-    ui::MouseButtons m_selectingButtons;
+    ui::MouseButton m_selectingButton;
     gfx::Point m_startingPos;
     Flags m_flags;
   };

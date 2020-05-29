@@ -1,5 +1,5 @@
 // Aseprite Document IO Library
-// Copyright (c) 2018 Igara Studio S.A.
+// Copyright (c) 2018-2019 Igara Studio S.A.
 // Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -58,6 +58,10 @@ bool AsepriteDecoder::decode()
   // Set pixel ratio
   sprite->setPixelRatio(doc::PixelRatio(header.pixel_width, header.pixel_height));
 
+  // Set grid bounds
+  sprite->setGridBounds(gfx::Rect(header.grid_x, header.grid_y,
+                                  header.grid_width, header.grid_height));
+
   // Prepare variables for layer chunks
   doc::Layer* last_layer = sprite->root();
   doc::WithUserData* last_object_with_user_data = nullptr;
@@ -87,7 +91,7 @@ bool AsepriteDecoder::decode()
         sprite->setFrameDuration(frame, frame_header.duration);
 
       // Read chunks
-      for (int c=0; c<frame_header.chunks; c++) {
+      for (uint32_t c=0; c<frame_header.chunks; c++) {
         // Start chunk position
         size_t chunk_pos = f()->tell();
         delegate()->progress((float)chunk_pos / (float)header.size);
@@ -172,8 +176,8 @@ bool AsepriteDecoder::decode()
             // Ignore
             break;
 
-          case ASE_FILE_CHUNK_FRAME_TAGS:
-            readFrameTagsChunk(&sprite->frameTags());
+          case ASE_FILE_CHUNK_TAGS:
+            readTagsChunk(&sprite->tags());
             break;
 
           case ASE_FILE_CHUNK_SLICES: {
@@ -193,6 +197,12 @@ bool AsepriteDecoder::decode()
             readUserDataChunk(&userData);
             if (last_object_with_user_data)
               last_object_with_user_data->setUserData(userData);
+            break;
+          }
+
+          case ASE_FILE_CHUNK_TILESET: {
+            delegate()->error(
+              "Warning: The given file contains a tileset.\nThis version of Aseprite doesn't support tilemap layers.\n");
             break;
           }
 
@@ -246,6 +256,10 @@ bool AsepriteDecoder::readHeader(AsepriteHeader* header)
   header->ncolors    = read16();
   header->pixel_width = read8();
   header->pixel_height = read8();
+  header->grid_x       = (int16_t)read16();
+  header->grid_y       = (int16_t)read16();
+  header->grid_width   = read16();
+  header->grid_height  = read16();
 
   if (header->ncolors == 0)     // 0 means 256 (old .ase files)
     header->ncolors = 256;
@@ -582,8 +596,8 @@ doc::Cel* AsepriteDecoder::readCelChunk(doc::Sprite* sprite,
 {
   // Read chunk data
   doc::layer_t layer_index = read16();
-  int x = ((short)read16());
-  int y = ((short)read16());
+  int x = ((int16_t)read16());
+  int y = ((int16_t)read16());
   int opacity = read8();
   int cel_type = read16();
   readPadding(7);
@@ -651,12 +665,10 @@ doc::Cel* AsepriteDecoder::readCelChunk(doc::Sprite* sprite,
         // different X, Y, or opacity per link, in that case we must
         // create a copy.
         if (link->x() == x && link->y() == y && link->opacity() == opacity) {
-          cel.reset(doc::Cel::createLink(link));
-          cel->setFrame(frame);
+          cel.reset(doc::Cel::MakeLink(frame, link));
         }
         else {
-          cel.reset(doc::Cel::createCopy(link));
-          cel->setFrame(frame);
+          cel.reset(doc::Cel::MakeCopy(frame, link));
           cel->setPosition(x, y);
           cel->setOpacity(opacity);
         }
@@ -805,14 +817,14 @@ doc::Mask* AsepriteDecoder::readMaskChunk()
   return mask;
 }
 
-void AsepriteDecoder::readFrameTagsChunk(doc::FrameTags* frameTags)
+void AsepriteDecoder::readTagsChunk(doc::Tags* tags)
 {
-  size_t tags = read16();
+  size_t ntags = read16();
 
   read32();                     // 8 reserved bytes
   read32();
 
-  for (size_t c=0; c<tags; ++c) {
+  for (size_t c=0; c<ntags; ++c) {
     doc::frame_t from = read16();
     doc::frame_t to = read16();
     int aniDir = read8();
@@ -832,11 +844,11 @@ void AsepriteDecoder::readFrameTagsChunk(doc::FrameTags* frameTags)
 
     std::string name = readString();
 
-    doc::FrameTag* tag = new doc::FrameTag(from, to);
+    auto tag = new doc::Tag(from, to);
     tag->setColor(doc::rgba(r, g, b, 255));
     tag->setName(name);
     tag->setAniDir((doc::AniDir)aniDir);
-    frameTags->add(tag);
+    tags->add(tag);
   }
 }
 

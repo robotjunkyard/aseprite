@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -62,7 +62,7 @@ namespace app {
                    public DocObserver,
                    public EditorObserver,
                    public InputChainElement,
-                   public FrameTagProvider {
+                   public TagProvider {
   public:
     typedef DocRange Range;
 
@@ -115,12 +115,12 @@ namespace app {
     // called from popup menus.
     void dropRange(DropOp op);
 
-    // FrameTagProvider impl
+    // TagProvider impl
     // Returns the active frame tag depending on the timeline status
     // E.g. if other frame tags are collapsed, the focused band has
     // priority and tags in other bands are ignored.
-    FrameTag* getFrameTagByFrame(const frame_t frame,
-                                 const bool getLoopTagIfNone) override;
+    Tag* getTagByFrame(const frame_t frame,
+                       const bool getLoopTagIfNone) override;
 
     // ScrollableViewDelegate impl
     gfx::Size visibleSize() const override;
@@ -129,6 +129,8 @@ namespace app {
 
     void lockRange();
     void unlockRange();
+
+    void clearAndInvalidateRange();
 
   protected:
     bool onProcessMessage(ui::Message* msg) override;
@@ -141,13 +143,13 @@ namespace app {
     // DocObserver impl.
     void onGeneralUpdate(DocEvent& ev) override;
     void onAddLayer(DocEvent& ev) override;
+    void onBeforeRemoveLayer(DocEvent& ev) override;
     void onAfterRemoveLayer(DocEvent& ev) override;
     void onAddFrame(DocEvent& ev) override;
     void onRemoveFrame(DocEvent& ev) override;
-    void onSelectionChanged(DocEvent& ev) override;
     void onLayerNameChange(DocEvent& ev) override;
-    void onAddFrameTag(DocEvent& ev) override;
-    void onRemoveFrameTag(DocEvent& ev) override;
+    void onAddTag(DocEvent& ev) override;
+    void onRemoveTag(DocEvent& ev) override;
 
     // app::Context slots.
     void onAfterCommandExecution(CommandExecutionEvent& ev);
@@ -184,17 +186,17 @@ namespace app {
       int part;
       layer_t layer;
       frame_t frame;
-      ObjectId frameTag;
+      ObjectId tag;
       bool veryBottom;
       int band;
 
       Hit(int part = 0,
           layer_t layer = -1,
           frame_t frame = 0,
-          ObjectId frameTag = NullId,
+          ObjectId tag = NullId,
           int band = -1);
       bool operator!=(const Hit& other) const;
-      FrameTag* getFrameTag() const;
+      Tag* getTag() const;
     };
 
     struct DropTarget {
@@ -270,7 +272,7 @@ namespace app {
     void drawCelLinkDecorators(ui::Graphics* g, const gfx::Rect& bounds,
                                Cel* cel, frame_t frame, bool is_active, bool is_hover,
                                DrawCelData* data);
-    void drawFrameTags(ui::Graphics* g);
+    void drawTags(ui::Graphics* g);
     void drawRangeOutline(ui::Graphics* g);
     void drawPaddings(ui::Graphics* g);
     bool drawPart(ui::Graphics* g, int part, layer_t layer, frame_t frame);
@@ -307,11 +309,10 @@ namespace app {
     bool isCelLooselyActive(const layer_t layerIdx, const frame_t frame) const;
     void updateStatusBar(ui::Message* msg);
     void updateStatusBarForFrame(const frame_t frame,
-                                 const FrameTag* frameTag,
+                                 const Tag* tag,
                                  const Cel* cel);
     void updateDropRange(const gfx::Point& pt);
     void clearClipboardRange();
-    void clearAndInvalidateRange();
 
     // The layer of the bottom (e.g. Background layer)
     layer_t firstLayer() const { return 0; }
@@ -337,7 +338,7 @@ namespace app {
     int frameBoxWidth() const;
     int outlineWidth() const;
     int oneTagHeight() const;
-    int calcTagVisibleToFrame(FrameTag* frameTag) const;
+    int calcTagVisibleToFrame(Tag* tag) const;
 
     void updateCelOverlayBounds(const Hit& hit);
     void drawCelOverlay(ui::Graphics* g);
@@ -347,7 +348,7 @@ namespace app {
                           const bool updatePref);
 
     double zoom() const;
-    int tagFramesDuration(const FrameTag* frameTag) const;
+    int tagFramesDuration(const Tag* tag) const;
     // Calculate the duration of the selected range of frames
     int selectedFramesDuration() const;
 
@@ -378,7 +379,7 @@ namespace app {
     // Data used to display frame tags
     int m_tagBands;
     int m_tagFocusBand;
-    std::map<FrameTag*, int> m_tagBand;
+    std::map<Tag*, int> m_tagBand;
 
     int m_separator_x;
     int m_separator_w;
@@ -407,8 +408,7 @@ namespace app {
 
     // Data used for thumbnails.
     bool m_thumbnailsOverlayVisible;
-    gfx::Rect m_thumbnailsOverlayInner;
-    gfx::Rect m_thumbnailsOverlayOuter;
+    gfx::Rect m_thumbnailsOverlayBounds;
     Hit m_thumbnailsOverlayHit;
     gfx::Point m_thumbnailsOverlayDirection;
     obs::connection m_thumbnailsPrefConn;
@@ -420,18 +420,27 @@ namespace app {
     } m_moveRangeData;
   };
 
+#ifdef ENABLE_UI
   class LockTimelineRange {
   public:
     LockTimelineRange(Timeline* timeline)
       : m_timeline(timeline) {
-      m_timeline->lockRange();
+      if (m_timeline)
+        m_timeline->lockRange();
     }
     ~LockTimelineRange() {
-      m_timeline->unlockRange();
+      if (m_timeline)
+        m_timeline->unlockRange();
     }
   private:
     Timeline* m_timeline;
   };
+#else  // !ENABLE_UI
+  class LockTimelineRange {
+  public:
+    LockTimelineRange(Timeline* timeline) { }
+  };
+#endif
 
 } // namespace app
 

@@ -1,7 +1,7 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
-// Copyright (C) 2015-2018 David Capello
-// Copyright (C) 2015 Gabriel Rauter
+// Copyright (C) 2018-2020  Igara Studio S.A.
+// Copyright (C) 2015-2018  David Capello
+// Copyright (C) 2015  Gabriel Rauter
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -21,6 +21,7 @@
 #include "app/ini_file.h"
 #include "app/pref/preferences.h"
 #include "base/bind.h"
+#include "base/clamp.h"
 #include "base/convert_to.h"
 #include "base/file_handle.h"
 #include "doc/doc.h"
@@ -69,7 +70,7 @@ class WebPFormat : public FileFormat {
 #ifdef ENABLE_SAVE
   bool onSave(FileOp* fop) override;
 #endif
-  base::SharedPtr<FormatOptions> onGetFormatOptions(FileOp* fop) override;
+  FormatOptionsPtr onAskUserForFormatOptions(FileOp* fop) override;
 };
 
 FileFormat* CreateWebPFormat()
@@ -139,7 +140,7 @@ bool WebPFormat::onLoad(FileOp* fop)
   WebPInitDecoderConfig(&config);
   if (WebPGetFeatures(webp_data.bytes, webp_data.size, &config.input)) {
     if (!fop->formatOptions()) {
-      base::SharedPtr<WebPOptions> opts(new WebPOptions());
+      auto opts = std::make_shared<WebPOptions>();
       WebPOptions::Type type = WebPOptions::Simple;
       switch (config.input.format) {
         case 0: type = WebPOptions::Simple; break;
@@ -147,7 +148,7 @@ bool WebPFormat::onLoad(FileOp* fop)
         case 2: type = WebPOptions::Lossless; break;
       }
       opts->setType(type);
-      fop->setFormatOptions(opts);
+      fop->setLoadedFormatOptions(opts);
     }
   }
   else {
@@ -242,8 +243,8 @@ static int progress_report(int percent, const WebPPicture* pic)
   FileOp* fop = wd->fop;
 
   double newProgress = (double(wd->f) + double(percent)/100.0) / double(wd->n);
-  wd->progress = MAX(wd->progress, newProgress);
-  wd->progress = MID(0.0, wd->progress, 1.0);
+  wd->progress = std::max(wd->progress, newProgress);
+  wd->progress = base::clamp(wd->progress, 0.0, 1.0);
 
   fop->setProgress(wd->progress);
   if (fop->isStop())
@@ -268,7 +269,7 @@ bool WebPFormat::onSave(FileOp* fop)
     return false;
   }
 
-  base::SharedPtr<WebPOptions> opts = fop->formatOptions();
+  auto opts = fop->formatOptionsForSaving<WebPOptions>();
   WebPConfig config;
   WebPConfigInit(&config);
 
@@ -367,15 +368,9 @@ bool WebPFormat::onSave(FileOp* fop)
 #endif  // ENABLE_SAVE
 
 // Shows the WebP configuration dialog.
-base::SharedPtr<FormatOptions> WebPFormat::onGetFormatOptions(FileOp* fop)
+FormatOptionsPtr WebPFormat::onAskUserForFormatOptions(FileOp* fop)
 {
-  base::SharedPtr<WebPOptions> opts;
-  if (fop->document()->getFormatOptions())
-    opts = base::SharedPtr<WebPOptions>(fop->document()->getFormatOptions());
-
-  if (!opts)
-    opts.reset(new WebPOptions);
-
+  auto opts = fop->formatOptionsOfDocument<WebPOptions>();
 #ifdef ENABLE_UI
   if (fop->context() && fop->context()->isUIAvailable()) {
     try {
@@ -452,17 +447,16 @@ base::SharedPtr<FormatOptions> WebPFormat::onGetFormatOptions(FileOp* fop)
           }
         }
         else {
-          opts.reset(nullptr);
+          opts.reset();
         }
       }
     }
     catch (const std::exception& e) {
       Console::showException(e);
-      return base::SharedPtr<WebPOptions>(nullptr);
+      return std::shared_ptr<WebPOptions>(nullptr);
     }
   }
 #endif // ENABLE_UI
-
   return opts;
 }
 

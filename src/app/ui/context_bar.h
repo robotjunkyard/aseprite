@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -12,13 +12,16 @@
 #include "app/pref/preferences.h"
 #include "app/shade.h"
 #include "app/tools/active_tool_observer.h"
+#include "app/tools/dynamics.h"
 #include "app/tools/ink_type.h"
 #include "app/tools/tool_loop_modifiers.h"
 #include "app/ui/context_bar_observer.h"
+#include "app/ui/doc_observer_widget.h"
 #include "doc/brush.h"
 #include "obs/connection.h"
 #include "obs/observable.h"
 #include "obs/signal.h"
+#include "render/gradient.h"
 #include "ui/box.h"
 
 #include <vector>
@@ -47,13 +50,16 @@ namespace app {
   }
 
   class BrushSlot;
+  class ColorBar;
   class DitheringSelector;
+  class GradientTypeSelector;
 
-  class ContextBar : public ui::Box
+  class ContextBar : public DocObserverWidget<ui::HBox>
                    , public obs::observable<ContextBarObserver>
                    , public tools::ActiveToolObserver {
   public:
-    ContextBar(ui::TooltipManager* tooltipManager);
+    ContextBar(ui::TooltipManager* tooltipManager,
+               ColorBar* colorBar);
     ~ContextBar();
 
     void updateForActiveTool();
@@ -83,6 +89,10 @@ namespace app {
     // For gradients
     render::DitheringMatrix ditheringMatrix();
     render::DitheringAlgorithmBase* ditheringAlgorithm();
+    render::GradientType gradientType();
+
+    // For freehand with dynamics
+    tools::DynamicsOptions getDynamics();
 
     // Signals
     obs::signal<void()> BrushChange;
@@ -93,6 +103,17 @@ namespace app {
     void onToolSetOpacity(const int& newOpacity);
     void onToolSetFreehandAlgorithm();
     void onToolSetContiguous();
+
+    // ContextObserver impl
+    void onActiveSiteChange(const Site& site) override;
+
+    // DocObserverWidget overrides
+    void onDocChange(Doc* doc) override;
+
+    // DocObserver impl
+    void onAddSlice(DocEvent& ev) override;
+    void onRemoveSlice(DocEvent& ev) override;
+    void onSliceNameChange(DocEvent& ev) override;
 
   private:
     void onBrushSizeChange();
@@ -107,6 +128,7 @@ namespace app {
     void setupTooltips(ui::TooltipManager* tooltipManager);
     void registerCommands();
     void showBrushes();
+    void showDynamics();
 
     class ZoomButtons;
     class BrushBackField;
@@ -122,15 +144,18 @@ namespace app {
     class SprayWidthField;
     class SpraySpeedField;
     class SelectionModeField;
+    class GradientTypeField;
     class TransparentColorField;
     class PivotField;
     class RotAlgorithmField;
+    class DynamicsField;
     class FreehandAlgorithmField;
     class BrushPatternField;
     class EyedropperField;
     class DropPixelsField;
     class AutoSelectLayerField;
     class SymmetryField;
+    class SliceFields;
 
     ZoomButtons* m_zoomButtons;
     BrushBackField* m_brushBack;
@@ -148,6 +173,7 @@ namespace app {
     EyedropperField* m_eyedropperField;
     AutoSelectLayerField* m_autoSelectLayer;
     ui::Box* m_freehandBox;
+    DynamicsField* m_dynamics;
     FreehandAlgorithmField* m_freehandAlgo;
     BrushPatternField* m_brushPatternField;
     ui::Box* m_sprayBox;
@@ -157,6 +183,7 @@ namespace app {
     ui::Box* m_selectionOptionsBox;
     DitheringSelector* m_ditheringSelector;
     SelectionModeField* m_selectionMode;
+    GradientTypeField* m_gradientType;
     TransparentColorField* m_transparentColor;
     PivotField* m_pivot;
     RotAlgorithmField* m_rotAlgo;
@@ -164,6 +191,7 @@ namespace app {
     doc::BrushRef m_activeBrush;
     ui::Label* m_selectBoxHelp;
     SymmetryField* m_symmetry;
+    SliceFields* m_sliceFields;
     obs::scoped_connection m_sizeConn;
     obs::scoped_connection m_angleConn;
     obs::scoped_connection m_opacityConn;

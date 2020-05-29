@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,6 +12,7 @@
 #include "app/app.h"
 #include "app/cmd/clear_mask.h"
 #include "app/cmd/deselect_mask.h"
+#include "app/cmd/set_mask.h"
 #include "app/cmd/trim_cel.h"
 #include "app/console.h"
 #include "app/context_access.h"
@@ -31,12 +33,14 @@
 #include "app/util/clipboard.h"
 #include "app/util/clipboard_native.h"
 #include "app/util/new_image_from_mask.h"
-#include "base/shared_ptr.h"
+#include "app/util/range_utils.h"
 #include "clip/clip.h"
 #include "doc/doc.h"
+#include "render/dithering.h"
 #include "render/ordered_dither.h"
 #include "render/quantization.h"
 
+#include <memory>
 #include <stdexcept>
 
 namespace app {
@@ -93,10 +97,10 @@ namespace clipboard {
 
 using namespace doc;
 
-static base::SharedPtr<Palette> clipboard_palette;
+static std::shared_ptr<Palette> clipboard_palette;
 static PalettePicks clipboard_picks;
 static ImageRef clipboard_image;
-static base::SharedPtr<Mask> clipboard_mask;
+static std::shared_ptr<Mask> clipboard_mask;
 static ClipboardRange clipboard_range;
 
 static ClipboardManager* g_instance = nullptr;
@@ -192,7 +196,9 @@ static bool copy_from_document(const Site& site, bool merged = false)
   ASSERT(document);
 
   const Mask* mask = document->mask();
-  Image* image = new_image_from_mask(site, mask, merged);
+  Image* image = new_image_from_mask(site, mask,
+                                     Preferences::instance().experimental.newBlend(),
+                                     merged);
   if (!image)
     return false;
 
@@ -234,6 +240,28 @@ void get_document_range_info(Doc** document, DocRange* range)
   }
 }
 
+void clear_mask_from_cels(Tx& tx,
+                          Doc* doc,
+                          const CelList& cels,
+                          const bool deselectMask)
+{
+  for (Cel* cel : cels) {
+    ObjectId celId = cel->id();
+
+    tx(new cmd::ClearMask(cel));
+
+    // Get cel again just in case the cmd::ClearMask() called cmd::ClearCel()
+    cel = doc::get<Cel>(celId);
+    if (cel &&
+        cel->layer()->isTransparent()) {
+      tx(new cmd::TrimCel(cel));
+    }
+  }
+
+  if (deselectMask)
+    tx(new cmd::DeselectMask(doc));
+}
+
 void clear_content()
 {
   set_clipboard_image(nullptr, nullptr, nullptr, true, false);
@@ -252,14 +280,18 @@ void cut(ContextWriter& writer)
   else {
     {
       Tx tx(writer.context(), "Cut");
-      tx(new cmd::ClearMask(writer.cel()));
-
-      ASSERT(writer.cel());
-      if (writer.cel() &&
-          writer.cel()->layer()->isTransparent())
-        tx(new cmd::TrimCel(writer.cel()));
-
-      tx(new cmd::DeselectMask(writer.document()));
+      Site site = writer.context()->activeSite();
+      CelList cels;
+      if (site.range().enabled()) {
+        cels = get_unlocked_unique_cels(site.sprite(), site.range());
+      }
+      else if (site.cel()) {
+        cels.push_back(site.cel());
+      }
+      clear_mask_from_cels(tx,
+                           writer.document(),
+                           cels,
+                           true); // Deselect mask
       tx.commit();
     }
     writer.document()->generateMaskBoundaries();
@@ -320,33 +352,27 @@ void copy_palette(const Palette* palette, const doc::PalettePicks& picks)
   clipboard_picks = picks;
 }
 
-void paste()
+void paste(Context* ctx, const bool interactive)
 {
-  Editor* editor = current_editor;
-  if (editor == NULL)
+  Site site = ctx->activeSite();
+  Doc* dstDoc = site.document();
+  if (!dstDoc)
     return;
 
-  Doc* dstDoc = editor->document();
-  Sprite* dstSpr = dstDoc->sprite();
+  Sprite* dstSpr = site.sprite();
+  if (!dstSpr)
+    return;
 
   switch (get_current_format()) {
 
     case clipboard::ClipboardImage: {
       // Get the image from the native clipboard.
-      if (use_native_clipboard()) {
-        Image* native_image = nullptr;
-        Mask* native_mask = nullptr;
-        Palette* native_palette = nullptr;
-        get_native_clipboard_bitmap(&native_image, &native_mask, &native_palette);
-        if (native_image)
-          set_clipboard_image(native_image, native_mask, native_palette,
-                              false, false);
-      }
-
-      if (!clipboard_image)
+      if (!get_image(nullptr))
         return;
 
-      Palette* dst_palette = dstSpr->palette(editor->frame());
+      ASSERT(clipboard_image);
+
+      Palette* dst_palette = dstSpr->palette(site.frame());
 
       // Source image (clipboard or a converted copy to the destination 'imgtype')
       ImageRef src_image;
@@ -358,21 +384,58 @@ void paste()
         src_image = clipboard_image;
       }
       else {
-        RgbMap* dst_rgbmap = dstSpr->rgbMap(editor->frame());
+        RgbMap* dst_rgbmap = dstSpr->rgbMap(site.frame());
 
         src_image.reset(
           render::convert_pixel_format(
             clipboard_image.get(), NULL, dstSpr->pixelFormat(),
-            render::DitheringAlgorithm::None,
-            render::DitheringMatrix(),
+            render::Dithering(),
             dst_rgbmap, clipboard_palette.get(),
             false,
             0));
       }
 
-      // Change to MovingPixelsState
-      editor->pasteImage(src_image.get(),
-                         clipboard_mask.get());
+      if (current_editor && interactive) {
+        // TODO we don't support pasting in multiple cels at the
+        //      moment, so we clear the range here (same as in
+        //      PasteTextCommand::onExecute())
+        App::instance()->timeline()->clearAndInvalidateRange();
+
+        // Change to MovingPixelsState
+        current_editor->pasteImage(src_image.get(),
+                                   clipboard_mask.get());
+      }
+      else {
+        // Non-interactive version (just copy the image to the cel)
+        Layer* dstLayer = site.layer();
+        ASSERT(dstLayer);
+        if (!dstLayer || !dstLayer->isImage())
+          return;
+
+        Tx tx(ctx, "Paste Image");
+        DocApi api = dstDoc->getApi(tx);
+        Cel* dstCel = api.addCel(
+          static_cast<LayerImage*>(dstLayer), site.frame(),
+          ImageRef(Image::createCopy(src_image.get())));
+
+        // Adjust bounds
+        if (dstCel) {
+          if (clipboard_mask) {
+            if (dstLayer->isReference()) {
+              dstCel->setBounds(dstSpr->bounds());
+
+              Mask emptyMask;
+              tx(new cmd::SetMask(dstDoc, &emptyMask));
+            }
+            else {
+              dstCel->setBounds(clipboard_mask->bounds());
+              tx(new cmd::SetMask(dstDoc, clipboard_mask.get()));
+            }
+          }
+        }
+
+        tx.commit();
+      }
       break;
     }
 
@@ -384,8 +447,12 @@ void paste()
       switch (srcRange.type()) {
 
         case DocRange::kCels: {
-          Layer* dstLayer = editor->layer();
-          frame_t dstFrameFirst = editor->frame();
+          Layer* dstLayer = site.layer();
+          ASSERT(dstLayer);
+          if (!dstLayer)
+            return;
+
+          frame_t dstFrameFirst = site.frame();
 
           DocRange dstRange;
           dstRange.startRange(dstLayer, dstFrameFirst, DocRange::kCels);
@@ -402,11 +469,12 @@ void paste()
             // This is the app::copy_range (not clipboard::copy_range()).
             if (srcRange.layers() == dstRange.layers())
               app::copy_range(srcDoc, srcRange, dstRange, kDocRangeBefore);
-            editor->invalidate();
+            if (current_editor)
+              current_editor->invalidate(); // TODO check if this is necessary
             return;
           }
 
-          Tx tx(UIContext::instance(), "Paste Cels");
+          Tx tx(ctx, "Paste Cels");
           DocApi api = dstDoc->getApi(tx);
 
           // Add extra frames if needed
@@ -429,50 +497,17 @@ void paste()
                 !dstLayer->isImage())
               continue;
 
-            // Maps a linked Cel in the original sprite with its
-            // corresponding copy in the new sprite. In this way
-            // we can.
-            std::map<Cel*, Cel*> relatedCels;
-
             frame_t dstFrame = dstFrameFirst;
             for (frame_t srcFrame : srcRange.selectedFrames()) {
               Cel* srcCel = srcLayer->cel(srcFrame);
-              Cel* srcLink = nullptr;
 
               if (srcCel && srcCel->image()) {
-                bool createCopy = true;
-
-                if (dstLayer->isContinuous() &&
-                    srcCel->links()) {
-                  srcLink = srcCel->link();
-                  if (!srcLink)
-                    srcLink = srcCel;
-
-                  if (srcLink) {
-                    Cel* dstRelated = relatedCels[srcLink];
-                    if (dstRelated) {
-                      createCopy = false;
-
-                      // Create a link from dstRelated
-                      api.copyCel(
-                        static_cast<LayerImage*>(dstLayer), dstRelated->frame(),
-                        static_cast<LayerImage*>(dstLayer), dstFrame);
-                    }
-                  }
-                }
-
-                if (createCopy) {
-                  api.copyCel(
-                    static_cast<LayerImage*>(srcLayer), srcFrame,
-                    static_cast<LayerImage*>(dstLayer), dstFrame);
-
-                  if (srcLink)
-                    relatedCels[srcLink] = dstLayer->cel(dstFrame);
-                }
+                api.copyCel(
+                  static_cast<LayerImage*>(srcLayer), srcFrame,
+                  static_cast<LayerImage*>(dstLayer), dstFrame);
               }
               else {
-                Cel* dstCel = dstLayer->cel(dstFrame);
-                if (dstCel)
+                if (Cel* dstCel = dstLayer->cel(dstFrame))
                   api.clearCel(dstCel);
               }
 
@@ -481,12 +516,13 @@ void paste()
           }
 
           tx.commit();
-          editor->invalidate();
+          if (current_editor)
+            current_editor->invalidate(); // TODO check if this is necessary
           break;
         }
 
         case DocRange::kFrames: {
-          frame_t dstFrame = editor->frame();
+          frame_t dstFrame = site.frame();
 
           // We use a DocRange operation to copy frames inside
           // the same sprite.
@@ -498,7 +534,7 @@ void paste()
             break;
           }
 
-          Tx tx(UIContext::instance(), "Paste Frames");
+          Tx tx(ctx, "Paste Frames");
           DocApi api = dstDoc->getApi(tx);
 
           auto srcLayers = srcSpr->allBrowsableLayers();
@@ -533,7 +569,8 @@ void paste()
           }
 
           tx.commit();
-          editor->invalidate();
+          if (current_editor)
+            current_editor->invalidate(); // TODO check if this is necessary
           break;
         }
 
@@ -541,7 +578,7 @@ void paste()
           if (srcDoc->colorMode() != dstDoc->colorMode())
             throw std::runtime_error("You cannot copy layers of document with different color modes");
 
-          Tx tx(UIContext::instance(), "Paste Layers");
+          Tx tx(ctx, "Paste Layers");
           DocApi api = dstDoc->getApi(tx);
 
           // Remove children if their parent is selected so we only
@@ -584,7 +621,8 @@ void paste()
           }
 
           tx.commit();
-          editor->invalidate();
+          if (current_editor)
+            current_editor->invalidate(); // TODO check if this is necessary
           break;
         }
       }
@@ -592,6 +630,23 @@ void paste()
     }
 
   }
+}
+
+ImageRef get_image(Palette* palette)
+{
+  // Get the image from the native clipboard.
+  if (use_native_clipboard()) {
+    Image* native_image = nullptr;
+    Mask* native_mask = nullptr;
+    Palette* native_palette = nullptr;
+    get_native_clipboard_bitmap(&native_image, &native_mask, &native_palette);
+    if (native_image)
+      set_clipboard_image(native_image, native_mask, native_palette,
+                          false, false);
+  }
+  if (clipboard_palette && palette)
+    clipboard_palette->copyColorsTo(palette);
+  return clipboard_image;
 }
 
 bool get_image_size(gfx::Size& size)

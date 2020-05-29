@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,6 +9,7 @@
 #define APP_TOOLS_CONTROLLER_H_INCLUDED
 #pragma once
 
+#include "app/tools/stroke.h"
 #include "app/tools/trace_policy.h"
 #include "gfx/point.h"
 
@@ -17,7 +19,6 @@
 namespace app {
   namespace tools {
 
-    class Stroke;
     class ToolLoop;
 
     // This class controls user input.
@@ -36,13 +37,13 @@ namespace app {
       // pressed. The controller could be sure that this method is called
       // at least one time. The point is a position relative to sprite
       // bounds.
-      virtual void pressButton(Stroke& stroke, const gfx::Point& point) = 0;
+      virtual void pressButton(ToolLoop* loop, Stroke& stroke, const Stroke::Pt& pt) = 0;
 
       // Called each time a mouse button is released.
-      virtual bool releaseButton(Stroke& stroke, const gfx::Point& point) = 0;
+      virtual bool releaseButton(Stroke& stroke, const Stroke::Pt& pt) = 0;
 
       // Called when the mouse is moved.
-      virtual void movement(ToolLoop* loop, Stroke& stroke, const gfx::Point& point) = 0;
+      virtual void movement(ToolLoop* loop, Stroke& stroke, const Stroke::Pt& pt) = 0;
 
       // The input and output strokes are relative to sprite coordinates.
       virtual void getStrokeToInterwine(const Stroke& input, Stroke& output) = 0;
@@ -50,7 +51,7 @@ namespace app {
 
       // Last point used by this controller, useful to save the last
       // point of a freehand tool.
-      virtual gfx::Point getLastPoint() const { return gfx::Point(0, 0); }
+      virtual Stroke::Pt getLastPoint() const { return gfx::Point(0, 0); }
 
       // Special trace policy that can change in the middle of the
       // ToolLoop. This is for LineFreehandController which uses a

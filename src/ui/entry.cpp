@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -12,6 +12,7 @@
 #include "ui/entry.h"
 
 #include "base/bind.h"
+#include "base/clamp.h"
 #include "base/string.h"
 #include "os/draw_text.h"
 #include "os/font.h"
@@ -112,8 +113,8 @@ void Entry::setCaretPos(int pos)
 {
   gfx::Size caretSize = theme()->getEntryCaretSize(this);
   int textlen = lastCaretPos();
-  m_caret = MID(0, pos, textlen);
-  m_scroll = MID(0, m_scroll, textlen);
+  m_caret = base::clamp(pos, 0, textlen);
+  m_scroll = base::clamp(m_scroll, 0, textlen);
 
   // Backward scroll
   if (m_caret < m_scroll)
@@ -171,23 +172,34 @@ void Entry::deselectText()
 
 std::string Entry::selectedText() const
 {
-  int selbeg, selend;
-  getEntryThemeInfo(nullptr, nullptr, nullptr, &selbeg, &selend);
-
-  if (selbeg >= 0 && selend >= 0) {
-    ASSERT(selbeg < int(m_boxes.size()));
-    ASSERT(selend < int(m_boxes.size()));
-    return text().substr(m_boxes[selbeg].from,
-                         m_boxes[selend].to - m_boxes[selbeg].from);
-  }
+  Range range = selectedRange();
+  if (!range.isEmpty())
+    return text().substr(m_boxes[range.from].from,
+                         m_boxes[range.to-1].to - m_boxes[range.from].from);
   else
     return std::string();
 }
 
+Entry::Range Entry::selectedRange() const
+{
+  Range range;
+  if ((m_select >= 0) &&
+      (m_caret != m_select)) {
+    range.from = std::min(m_caret, m_select);
+    range.to   = std::max(m_caret, m_select);
+
+    ASSERT(range.from >= 0 && range.from < int(m_boxes.size()));
+    ASSERT(range.to   >= 0 && range.to   <= int(m_boxes.size()));
+  }
+  return range;
+}
+
 void Entry::setSuffix(const std::string& suffix)
 {
-  m_suffix = suffix;
-  invalidate();
+  if (m_suffix != suffix) {
+    m_suffix = suffix;
+    invalidate();
+  }
 }
 
 void Entry::setTranslateDeadKeys(bool state)
@@ -195,22 +207,12 @@ void Entry::setTranslateDeadKeys(bool state)
   m_translate_dead_keys = state;
 }
 
-void Entry::getEntryThemeInfo(int* scroll, int* caret, int* state,
-                              int* selbeg, int* selend) const
+void Entry::getEntryThemeInfo(int* scroll, int* caret, int* state, Range* range) const
 {
   if (scroll) *scroll = m_scroll;
   if (caret) *caret = m_caret;
   if (state) *state = !m_hidden && m_state;
-
-  if ((m_select >= 0) &&
-      (m_caret != m_select)) {
-    *selbeg = MIN(m_caret, m_select);
-    *selend = MAX(m_caret, m_select)-1;
-  }
-  else {
-    *selbeg = -1;
-    *selend = -1;
-  }
+  if (range) *range = selectedRange();
 }
 
 gfx::Rect Entry::getEntryTextBounds() const
@@ -317,7 +319,7 @@ bool Entry::onProcessMessage(Message* msg)
             break;
 
           case kKeyBackspace:
-            if (msg->ctrlPressed())
+            if (msg->ctrlPressed() || msg->altPressed())
               cmd = EntryCmd::DeleteBackwardWord;
             else
               cmd = EntryCmd::DeleteBackward;
@@ -460,7 +462,7 @@ gfx::Size Entry::sizeHintWithText(Entry* entry,
 void Entry::onSizeHint(SizeHintEvent& ev)
 {
   int trailing = font()->textLength(getSuffix());
-  trailing = MAX(trailing, 2*theme()->getEntryCaretSize(this).w);
+  trailing = std::max(trailing, 2*theme()->getEntryCaretSize(this).w);
 
   int w =
     font()->textLength("w") * std::min(m_maxsize, 6) +
@@ -511,17 +513,20 @@ int Entry::getCaretFromMouse(MouseMessage* mousemsg)
   int mouseX = mousemsg->position().x;
   if (mouseX < bounds().x+border().left()) {
     // Scroll to the left
-    return MAX(0, m_scroll-1);
+    return std::max(0, m_scroll-1);
   }
 
   int lastPos = lastCaretPos();
-  int i = MIN(m_scroll, lastPos);
+  int i = std::min(m_scroll, lastPos);
   for (; i<lastPos; ++i) {
     int segmentWidth = 0;
-    for (int j=m_scroll; j<i; ++j)
+    int indexBox = 0;
+    for (int j=m_scroll; j<i; ++j) {
       segmentWidth += m_boxes[j].width;
+      indexBox = j+1;
+    }
 
-    int x = bounds().x + border().left() + segmentWidth;
+    int x = bounds().x + border().left() + segmentWidth + m_boxes[indexBox].width / 2;
 
     if (mouseX > bounds().x2() - border().right()) {
       if (x >= bounds().x2() - border().right()) {
@@ -529,25 +534,17 @@ int Entry::getCaretFromMouse(MouseMessage* mousemsg)
         break;
       }
     }
-    else {
-      if (x > mouseX) {
-        // Previous char is the selected one
-        if (i > m_scroll)
-          --i;
-        break;
-      }
-    }
+    else if (x > mouseX)
+      break;
   }
 
-  return MID(0, i, lastPos);
+  return base::clamp(i, 0, lastPos);
 }
 
 void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
 {
   std::string text = this->text();
-  int selbeg, selend;
-
-  getEntryThemeInfo(NULL, NULL, NULL, &selbeg, &selend);
+  const Range range = selectedRange();
 
   switch (cmd) {
 
@@ -556,11 +553,8 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
 
     case EntryCmd::InsertChar:
       // delete the entire selection
-      if (selbeg >= 0) {
-        text.erase(m_boxes[selbeg].from,
-                   m_boxes[selend].to - m_boxes[selbeg].from);
-
-        m_caret = selbeg;
+      if (!range.isEmpty()) {
+        deleteRange(range, text);
 
         // We set the caret to the beginning of the erased selection,
         // needed to show the first inserted character in case
@@ -657,16 +651,13 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
     case EntryCmd::DeleteForward:
     case EntryCmd::Cut:
       // delete the entire selection
-      if (selbeg >= 0) {
+      if (!range.isEmpty()) {
         // *cut* text!
         if (cmd == EntryCmd::Cut)
           set_clipboard_text(selectedText());
 
         // remove text
-        text.erase(m_boxes[selbeg].from,
-                   m_boxes[selend].to - m_boxes[selbeg].from);
-
-        m_caret = selbeg;
+        deleteRange(range, text);
       }
       // delete the next character
       else {
@@ -682,11 +673,8 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
       std::string clipboard;
       if (get_clipboard_text(clipboard)) {
         // delete the entire selection
-        if (selbeg >= 0) {
-          text.erase(m_boxes[selbeg].from,
-                     m_boxes[selend].to - m_boxes[selbeg].from);
-
-          m_caret = selbeg;
+        if (!range.isEmpty()) {
+          deleteRange(range, text);
           m_select = -1;
         }
 
@@ -711,17 +699,14 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
     }
 
     case EntryCmd::Copy:
-      if (selbeg >= 0)
+      if (!range.isEmpty())
         set_clipboard_text(selectedText());
       break;
 
     case EntryCmd::DeleteBackward:
       // delete the entire selection
-      if (selbeg >= 0) {
-        text.erase(m_boxes[selbeg].from,
-                   m_boxes[selend].to - m_boxes[selbeg].from);
-
-        m_caret = selbeg;
+      if (!range.isEmpty()) {
+        deleteRange(range, text);
       }
       // delete the previous character
       else {
@@ -740,7 +725,7 @@ void Entry::executeCmd(EntryCmd cmd, int unicodeChar, bool shift_pressed)
       backwardWord();
       if (m_caret < m_select) {
         text.erase(m_boxes[m_caret].from,
-                   m_boxes[m_select].to - m_boxes[m_caret].from);
+                   m_boxes[m_select-1].to - m_boxes[m_caret].from);
       }
       m_select = -1;
       break;
@@ -811,8 +796,8 @@ void Entry::backwardWord()
 
 bool Entry::isPosInSelection(int pos)
 {
-  return (pos >= MIN(m_caret, m_select) &&
-          pos <= MAX(m_caret, m_select));
+  return (pos >= std::min(m_caret, m_select) &&
+          pos <= std::max(m_caret, m_select));
 }
 
 void Entry::showEditPopupMenu(const gfx::Point& pt)
@@ -845,7 +830,9 @@ public:
 
   void preProcessChar(const int index,
                       const int codepoint,
-                      gfx::Color& fg, gfx::Color& bg) override {
+                      gfx::Color& fg,
+                      gfx::Color& bg,
+                      const gfx::Rect& charBounds) override {
     if (!m_boxes.empty())
       m_boxes.back().to = index;
 
@@ -894,6 +881,13 @@ void Entry::recalcCharBoxes(const std::string& text)
 bool Entry::shouldStartTimer(bool hasFocus)
 {
   return (!m_hidden && hasFocus && isEnabled());
+}
+
+void Entry::deleteRange(const Range& range, std::string& text)
+{
+  text.erase(m_boxes[range.from].from,
+             m_boxes[range.to-1].to - m_boxes[range.from].from);
+  m_caret = range.from;
 }
 
 } // namespace ui

@@ -1,5 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2018 David Capello
+// Copyright (C) 2019-2020  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,7 +11,7 @@
 
 #include "doc/mask.h"
 
-#include "base/base.h"
+#include "base/clamp.h"
 #include "base/memory.h"
 #include "doc/image_impl.h"
 
@@ -113,6 +114,8 @@ bool Mask::isRectangular() const
 
 void Mask::copyFrom(const Mask* sourceMask)
 {
+  ASSERT(m_freeze_count == 0);
+
   clear();
   setName(sourceMask->name().c_str());
 
@@ -120,8 +123,10 @@ void Mask::copyFrom(const Mask* sourceMask)
     // Add all the area of "mask"
     add(sourceMask->bounds());
 
-    // And copy the "mask" bitmap
-    copy_image(m_bitmap.get(), sourceMask->m_bitmap.get());
+    // And copy the "mask" bitmap (m_bitmap can be nullptr if this is
+    // frozen, so add() doesn't created the bitmap)
+    if (m_bitmap)
+      copy_image(m_bitmap.get(), sourceMask->m_bitmap.get());
   }
 }
 
@@ -193,11 +198,15 @@ void Mask::add(const gfx::Rect& bounds)
   if (m_freeze_count == 0)
     reserve(bounds);
 
+  // m_bitmap can be nullptr if we have m_freeze_count > 0
+  if (!m_bitmap)
+    return;
+
   fill_rect(m_bitmap.get(),
-    bounds.x-m_bounds.x,
-    bounds.y-m_bounds.y,
-    bounds.x-m_bounds.x+bounds.w-1,
-    bounds.y-m_bounds.y+bounds.h-1, 1);
+            bounds.x-m_bounds.x,
+            bounds.y-m_bounds.y,
+            bounds.x-m_bounds.x+bounds.w-1,
+            bounds.y-m_bounds.y+bounds.h-1, 1);
 }
 
 void Mask::subtract(const gfx::Rect& bounds)
@@ -224,7 +233,8 @@ void Mask::intersect(const gfx::Rect& bounds)
   Image* image = NULL;
 
   if (!newBounds.isEmpty()) {
-    image = crop_image(m_bitmap.get(),
+    image = crop_image(
+      m_bitmap.get(),
       newBounds.x-m_bounds.x,
       newBounds.y-m_bounds.y,
       newBounds.w,
@@ -377,10 +387,10 @@ void Mask::crop(const Image *image)
   beg_x2 = beg_x1 + m_bounds.w - 1;
   beg_y2 = beg_y1 + m_bounds.h - 1;
 
-  beg_x1 = MID(0, beg_x1, m_bounds.w-1);
-  beg_y1 = MID(0, beg_y1, m_bounds.h-1);
-  beg_x2 = MID(beg_x1, beg_x2, m_bounds.w-1);
-  beg_y2 = MID(beg_y1, beg_y2, m_bounds.h-1);
+  beg_x1 = base::clamp(beg_x1, 0, m_bounds.w-1);
+  beg_y1 = base::clamp(beg_y1, 0, m_bounds.h-1);
+  beg_x2 = base::clamp(beg_x2, beg_x1, m_bounds.w-1);
+  beg_y2 = base::clamp(beg_y2, beg_y1, m_bounds.h-1);
 
   /* left */
   ADVANCE(x1, x2, y2, <=, ++,
@@ -420,7 +430,8 @@ void Mask::reserve(const gfx::Rect& bounds)
     gfx::Rect newBounds = m_bounds.createUnion(bounds);
 
     if (m_bounds != newBounds) {
-      Image* image = crop_image(m_bitmap.get(),
+      Image* image = crop_image(
+        m_bitmap.get(),
         newBounds.x-m_bounds.x,
         newBounds.y-m_bounds.y,
         newBounds.w,
@@ -484,7 +495,10 @@ void Mask::shrink()
     m_bounds.w = x2 - x1 + 1;
     m_bounds.h = y2 - y1 + 1;
 
-    Image* image = crop_image(m_bitmap.get(), m_bounds.x-u, m_bounds.y-v, m_bounds.w, m_bounds.h, 0);
+    Image* image = crop_image(
+      m_bitmap.get(),
+      m_bounds.x-u, m_bounds.y-v,
+      m_bounds.w, m_bounds.h, 0);
     m_bitmap.reset(image);
   }
 

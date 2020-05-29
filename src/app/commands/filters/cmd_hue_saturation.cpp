@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2017-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -12,6 +13,8 @@
 #include "app/commands/command.h"
 #include "app/commands/filters/filter_manager_impl.h"
 #include "app/commands/filters/filter_window.h"
+#include "app/commands/filters/filter_worker.h"
+#include "app/commands/new_params.h"
 #include "app/context.h"
 #include "app/ini_file.h"
 #include "app/modules/gui.h"
@@ -32,6 +35,20 @@
 
 namespace app {
 
+using Mode = filters::HueSaturationFilter::Mode;
+
+struct HueSaturationParams : public NewParams {
+  Param<bool> ui { this, true, "ui" };
+  Param<filters::Target> channels { this, 0, "channels" };
+  Param<Mode> mode { this, Mode::HSL_MUL, "mode" };
+  Param<double> hue { this, 0.0, "hue" };
+  Param<double> saturation { this, 0.0, "saturation" };
+  Param<double> lightness { this, 0.0, { "lightness", "value" } };
+  Param<double> alpha { this, 0.0, "alpha" };
+};
+
+#ifdef ENABLE_UI
+
 static const char* ConfigSection = "HueSaturation";
 
 class HueSaturationWindow : public FilterWindow {
@@ -47,13 +64,17 @@ public:
     getContainer()->addChild(&m_colorType);
     getContainer()->addChild(&m_sliders);
 
+    static_assert(int(Mode::HSV_MUL) == 0 &&
+                  int(Mode::HSL_MUL) == 1 &&
+                  int(Mode::HSV_ADD) == 2 &&
+                  int(Mode::HSL_ADD) == 3,
+                  "Adjust widget showing filters::HueSaturationFilter::Mode enum");
     auto mode = Preferences::instance().hueSaturation.mode();
     m_colorType.addItem("HSV")->setFocusStop(false);
     m_colorType.addItem("HSL")->setFocusStop(false);
-    if (mode == gen::HueSaturationMode::HSV)
-      m_colorType.setSelectedItem(0);
-    else
-      m_colorType.setSelectedItem(1);
+    m_colorType.addItem("HSV+")->setFocusStop(false);
+    m_colorType.addItem("HSL+")->setFocusStop(false);
+    m_colorType.setSelectedItem(int(mode));
     m_colorType.ItemChange.connect(base::Bind<void>(&HueSaturationWindow::onChangeMode, this));
 
     m_sliders.setColorType(app::Color::HslType);
@@ -63,24 +84,21 @@ public:
     onChangeMode();
   }
 
+  Mode mode() const {
+    return Mode(m_colorType.selectedItem());
+  }
+
 private:
 
   bool isHsl() const {
-    return (m_colorType.selectedItem() == 1);
+    return (mode() == Mode::HSL_MUL ||
+            mode() == Mode::HSL_ADD);
   }
 
   void onChangeMode() {
-    const int isHsl = this->isHsl();
-
-    Preferences::instance().hueSaturation.mode
-      (isHsl ? gen::HueSaturationMode::HSL:
-               gen::HueSaturationMode::HSV);
-
-    m_filter.setMode(isHsl ?
-                     HueSaturationFilter::Mode::HSL:
-                     HueSaturationFilter::Mode::HSV);
-
-    m_sliders.setColorType(isHsl ?
+    Preferences::instance().hueSaturation.mode(mode());
+    m_filter.setMode(mode());
+    m_sliders.setColorType(isHsl() ?
                            app::Color::HslType:
                            app::Color::HsvType);
 
@@ -117,38 +135,61 @@ private:
   ColorSliders m_sliders;
 };
 
-class HueSaturationCommand : public Command {
+#endif  // ENABLE_UI
+
+class HueSaturationCommand : public CommandWithNewParams<HueSaturationParams> {
 public:
   HueSaturationCommand();
 
 protected:
-  bool onEnabled(Context* context) override;
-  void onExecute(Context* context) override;
+  bool onEnabled(Context* ctx) override;
+  void onExecute(Context* ctx) override;
 };
 
 HueSaturationCommand::HueSaturationCommand()
-  : Command(CommandId::HueSaturation(), CmdRecordableFlag)
+  : CommandWithNewParams<HueSaturationParams>(CommandId::HueSaturation(), CmdRecordableFlag)
 {
 }
 
-bool HueSaturationCommand::onEnabled(Context* context)
+bool HueSaturationCommand::onEnabled(Context* ctx)
 {
-  return context->checkFlags(ContextFlags::ActiveDocumentIsWritable |
-                             ContextFlags::HasActiveSprite);
+  return ctx->checkFlags(ContextFlags::ActiveDocumentIsWritable |
+                         ContextFlags::HasActiveSprite);
 }
 
-void HueSaturationCommand::onExecute(Context* context)
+void HueSaturationCommand::onExecute(Context* ctx)
 {
+#ifdef ENABLE_UI
+  const bool ui = (params().ui() && ctx->isUIAvailable());
+#endif
+
   HueSaturationFilter filter;
-  FilterManagerImpl filterMgr(context, &filter);
-  filterMgr.setTarget(TARGET_RED_CHANNEL |
-                      TARGET_GREEN_CHANNEL |
-                      TARGET_BLUE_CHANNEL |
-                      TARGET_GRAY_CHANNEL |
-                      TARGET_ALPHA_CHANNEL);
+  FilterManagerImpl filterMgr(ctx, &filter);
+  if (params().mode.isSet()) filter.setMode(params().mode());
+  if (params().hue.isSet()) filter.setHue(params().hue());
+  if (params().saturation.isSet()) filter.setSaturation(params().saturation() / 100.0);
+  if (params().lightness.isSet()) filter.setLightness(params().lightness() / 100.0);
+  if (params().alpha.isSet()) filter.setAlpha(params().alpha() / 100.0);
 
-  HueSaturationWindow window(filter, filterMgr);
-  window.doModal();
+  filters::Target channels =
+    TARGET_RED_CHANNEL |
+    TARGET_GREEN_CHANNEL |
+    TARGET_BLUE_CHANNEL |
+    TARGET_GRAY_CHANNEL |
+    TARGET_ALPHA_CHANNEL;
+  if (params().channels.isSet()) channels = params().channels();
+  filterMgr.setTarget(channels);
+
+#ifdef ENABLE_UI
+  if (ui) {
+    HueSaturationWindow window(filter, filterMgr);
+    window.doModal();
+  }
+  else
+#endif // ENABLE_UI
+  {
+    start_filter_worker(&filterMgr);
+  }
 }
 
 Command* CommandFactory::createHueSaturationCommand()

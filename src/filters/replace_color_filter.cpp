@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -10,7 +11,7 @@
 
 #include "filters/replace_color_filter.h"
 
-#include "base/base.h"
+#include "base/clamp.h"
 #include "doc/image.h"
 #include "doc/palette.h"
 #include "doc/rgbmap.h"
@@ -23,22 +24,23 @@ using namespace doc;
 
 ReplaceColorFilter::ReplaceColorFilter()
 {
-  m_from = m_to = m_tolerance = 0;
+  m_from = m_to = 0;
+  m_tolerance = 0;
 }
 
-void ReplaceColorFilter::setFrom(int from)
+void ReplaceColorFilter::setFrom(const color_t from)
 {
   m_from = from;
 }
 
-void ReplaceColorFilter::setTo(int to)
+void ReplaceColorFilter::setTo(const color_t to)
 {
   m_to = to;
 }
 
 void ReplaceColorFilter::setTolerance(int tolerance)
 {
-  m_tolerance = MID(0, tolerance, 255);
+  m_tolerance = base::clamp(tolerance, 0, 255);
 }
 
 const char* ReplaceColorFilter::getName()

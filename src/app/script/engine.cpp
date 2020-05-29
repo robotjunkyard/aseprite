@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2019  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -18,6 +18,7 @@
 #include "app/script/luacpp.h"
 #include "app/script/security.h"
 #include "app/sprite_sheet_type.h"
+#include "app/tools/ink_type.h"
 #include "base/chrono.h"
 #include "base/file_handle.h"
 #include "base/fs.h"
@@ -25,6 +26,8 @@
 #include "doc/anidir.h"
 #include "doc/blend_mode.h"
 #include "doc/color_mode.h"
+#include "filters/target.h"
+#include "ui/mouse_button.h"
 
 #include <fstream>
 #include <sstream>
@@ -72,8 +75,13 @@ int print(lua_State* L)
     lua_pop(L, 1);  // pop result
   }
   if (!output.empty()) {
-    App::instance()->scriptEngine()
-      ->consolePrint(output.c_str());
+    auto app = App::instance();
+    if (app && app->scriptEngine())
+      app->scriptEngine()->consolePrint(output.c_str());
+    else {
+      std::printf("%s\n", output.c_str());
+      std::fflush(stdout);
+    }
   }
   return 0;
 }
@@ -134,8 +142,11 @@ int unsupported(lua_State* L)
 
 void register_app_object(lua_State* L);
 void register_app_pixel_color_object(lua_State* L);
+void register_app_fs_object(lua_State* L);
 void register_app_command_object(lua_State* L);
+void register_app_preferences_object(lua_State* L);
 
+void register_brush_class(lua_State* L);
 void register_cel_class(lua_State* L);
 void register_cels_class(lua_State* L);
 void register_color_class(lua_State* L);
@@ -151,6 +162,7 @@ void register_layer_class(lua_State* L);
 void register_layers_class(lua_State* L);
 void register_palette_class(lua_State* L);
 void register_palettes_class(lua_State* L);
+void register_plugin_class(lua_State* L);
 void register_point_class(lua_State* L);
 void register_range_class(lua_State* L);
 void register_rect_class(lua_State* L);
@@ -163,6 +175,8 @@ void register_sprite_class(lua_State* L);
 void register_sprites_class(lua_State* L);
 void register_tag_class(lua_State* L);
 void register_tags_class(lua_State* L);
+void register_tool_class(lua_State* L);
+void register_version_class(lua_State* L);
 
 void set_app_params(lua_State* L, const Params& params);
 
@@ -227,7 +241,9 @@ Engine::Engine()
   // Register global app object
   register_app_object(L);
   register_app_pixel_color_object(L);
+  register_app_fs_object(L);
   register_app_command_object(L);
+  register_app_preferences_object(L);
 
   // Register constants
   lua_newtable(L);
@@ -293,11 +309,64 @@ Engine::Engine()
   lua_newtable(L);
   lua_pushvalue(L, -1);
   lua_setglobal(L, "SpriteSheetDataFormat");
-  setfield_integer(L, "JSON_HASH", DocExporter::JsonHashDataFormat);
-  setfield_integer(L, "JSON_ARRAY", DocExporter::JsonArrayDataFormat);
+  setfield_integer(L, "JSON_HASH", SpriteSheetDataFormat::JsonHash);
+  setfield_integer(L, "JSON_ARRAY", SpriteSheetDataFormat::JsonArray);
+  lua_pop(L, 1);
+
+  lua_newtable(L);
+  lua_pushvalue(L, -1);
+  lua_setglobal(L, "BrushType");
+  setfield_integer(L, "CIRCLE", doc::kCircleBrushType);
+  setfield_integer(L, "SQUARE", doc::kSquareBrushType);
+  setfield_integer(L, "LINE", doc::kLineBrushType);
+  setfield_integer(L, "IMAGE", doc::kImageBrushType);
+  lua_pop(L, 1);
+
+  lua_newtable(L);
+  lua_pushvalue(L, -1);
+  lua_setglobal(L, "BrushPattern");
+  setfield_integer(L, "ORIGIN", doc::BrushPattern::ALIGNED_TO_SRC);
+  setfield_integer(L, "TARGET", doc::BrushPattern::ALIGNED_TO_DST);
+  setfield_integer(L, "NONE", doc::BrushPattern::PAINT_BRUSH);
+  lua_pop(L, 1);
+
+  lua_newtable(L);
+  lua_pushvalue(L, -1);
+  lua_setglobal(L, "Ink");
+  setfield_integer(L, "SIMPLE", app::tools::InkType::SIMPLE);
+  setfield_integer(L, "ALPHA_COMPOSITING", app::tools::InkType::ALPHA_COMPOSITING);
+  setfield_integer(L, "COPY_COLOR", app::tools::InkType::COPY_COLOR);
+  setfield_integer(L, "LOCK_ALPHA", app::tools::InkType::LOCK_ALPHA);
+  setfield_integer(L, "SHADING", app::tools::InkType::SHADING);
+  lua_pop(L, 1);
+
+  lua_newtable(L);
+  lua_pushvalue(L, -1);
+  lua_setglobal(L, "FilterChannels");
+  setfield_integer(L, "RED",   TARGET_RED_CHANNEL);
+  setfield_integer(L, "GREEN", TARGET_GREEN_CHANNEL);
+  setfield_integer(L, "BLUE",  TARGET_BLUE_CHANNEL);
+  setfield_integer(L, "ALPHA", TARGET_ALPHA_CHANNEL);
+  setfield_integer(L, "GRAY",  TARGET_GRAY_CHANNEL);
+  setfield_integer(L, "INDEX", TARGET_INDEX_CHANNEL);
+  setfield_integer(L, "RGB",   TARGET_RED_CHANNEL | TARGET_GREEN_CHANNEL | TARGET_BLUE_CHANNEL);
+  setfield_integer(L, "RGBA",   TARGET_RED_CHANNEL | TARGET_GREEN_CHANNEL | TARGET_BLUE_CHANNEL | TARGET_ALPHA_CHANNEL);
+  setfield_integer(L, "GRAYA",   TARGET_GRAY_CHANNEL | TARGET_ALPHA_CHANNEL);
+  lua_pop(L, 1);
+
+  lua_newtable(L);
+  lua_pushvalue(L, -1);
+  lua_setglobal(L, "MouseButton");
+  setfield_integer(L, "NONE",   (int)ui::kButtonNone);
+  setfield_integer(L, "LEFT",   (int)ui::kButtonLeft);
+  setfield_integer(L, "RIGHT",  (int)ui::kButtonRight);
+  setfield_integer(L, "MIDDLE", (int)ui::kButtonMiddle);
+  setfield_integer(L, "X1",     (int)ui::kButtonX1);
+  setfield_integer(L, "X2",     (int)ui::kButtonX2);
   lua_pop(L, 1);
 
   // Register classes/prototypes
+  register_brush_class(L);
   register_cel_class(L);
   register_cels_class(L);
   register_color_class(L);
@@ -313,6 +382,7 @@ Engine::Engine()
   register_layers_class(L);
   register_palette_class(L);
   register_palettes_class(L);
+  register_plugin_class(L);
   register_point_class(L);
   register_range_class(L);
   register_rect_class(L);
@@ -325,6 +395,8 @@ Engine::Engine()
   register_sprites_class(L);
   register_tag_class(L);
   register_tags_class(L);
+  register_tool_class(L);
+  register_version_class(L);
 
   // Check that we have a clean start (without dirty in the stack)
   ASSERT(lua_gettop(L) == top);
@@ -351,8 +423,15 @@ bool Engine::evalCode(const std::string& code,
       if (s)
         onConsolePrint(s);
       ok = false;
+      m_returnCode = -1;
     }
     else {
+      // Return code
+      if (lua_isinteger(L, -1))
+        m_returnCode = lua_tointeger(L, -1);
+      else
+        m_returnCode = 0;
+
       // Code was executed correctly
       if (m_printLastResult) {
         if (!lua_isnone(L, -1)) {
@@ -367,6 +446,7 @@ bool Engine::evalCode(const std::string& code,
   catch (const std::exception& ex) {
     onConsolePrint(ex.what());
     ok = false;
+    m_returnCode = -1;
   }
 
   // Collect script garbage.
@@ -380,6 +460,9 @@ bool Engine::evalFile(const std::string& filename,
   std::stringstream buf;
   {
     std::ifstream s(FSTREAM_PATH(filename));
+    // Returns false if we cannot open the file
+    if (!s)
+      return false;
     buf << s.rdbuf();
   }
   std::string absFilename = base::get_absolute_path(filename);
@@ -391,6 +474,9 @@ bool Engine::evalFile(const std::string& filename,
 
 void Engine::onConsolePrint(const char* text)
 {
+  if (!text)
+    return;
+
   if (m_delegate)
     m_delegate->onConsolePrint(text);
   else {

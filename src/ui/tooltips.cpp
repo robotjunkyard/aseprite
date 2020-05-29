@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -11,6 +11,7 @@
 
 #include "ui/tooltips.h"
 
+#include "base/clamp.h"
 #include "gfx/size.h"
 #include "ui/graphics.h"
 #include "ui/intern.h"
@@ -76,7 +77,7 @@ bool TooltipManager::onProcessMessage(Message* msg)
           m_target.widget = it->first;
           m_target.tipInfo = it->second;
 
-          if (m_timer == NULL) {
+          if (m_timer == nullptr) {
             m_timer.reset(new Timer(kTooltipDelayMsecs, this));
             m_timer->Tick.connect(&TooltipManager::onTick, this);
           }
@@ -91,7 +92,7 @@ bool TooltipManager::onProcessMessage(Message* msg)
     case kMouseDownMessage:
     case kMouseLeaveMessage:
       if (m_tipWindow) {
-        m_tipWindow->closeWindow(NULL);
+        m_tipWindow->closeWindow(nullptr);
         m_tipWindow.reset();
       }
 
@@ -211,8 +212,8 @@ bool TipWindow::pointAt(int arrowAlign, const gfx::Rect& target)
         break;
     }
 
-    x = MID(0, x, ui::display_w()-w);
-    y = MID(0, y, ui::display_h()-h);
+    x = base::clamp(x, 0, ui::display_w()-w);
+    y = base::clamp(y, 0, ui::display_h()-h);
 
     if (m_target.intersects(gfx::Rect(x, y, w, h))) {
       switch (trycount) {
@@ -246,7 +247,7 @@ bool TipWindow::onProcessMessage(Message* msg)
     case kKeyDownMessage:
       if (m_closeOnKeyDown &&
           static_cast<KeyMessage*>(msg)->scancode() < kKeyFirstModifierScancode)
-        closeWindow(NULL);
+        closeWindow(nullptr);
       break;
 
   }

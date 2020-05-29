@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -26,18 +26,20 @@
 #include "app/util/create_cel_copy.h"
 #include "base/memory.h"
 #include "doc/cel.h"
-#include "doc/frame_tag.h"
 #include "doc/layer.h"
 #include "doc/mask.h"
 #include "doc/mask_boundaries.h"
 #include "doc/palette.h"
 #include "doc/sprite.h"
+#include "doc/tag.h"
 #include "os/display.h"
 #include "os/system.h"
 #include "ui/system.h"
 
 #include <limits>
 #include <map>
+
+#define DOC_TRACE(...) // TRACEARGS
 
 namespace app {
 
@@ -48,6 +50,7 @@ Doc::Doc(Sprite* sprite)
   : m_ctx(nullptr)
   , m_flags(kMaskVisible)
   , m_undo(new DocUndo)
+  , m_transaction(nullptr)
   // Information about the file format used to load/save this document
   , m_format_options(nullptr)
   // Mask
@@ -60,10 +63,12 @@ Doc::Doc(Sprite* sprite)
     sprites().add(sprite);
 
   updateOSColorSpace(false);
+  DOC_TRACE("DOC: New", this);
 }
 
 Doc::~Doc()
 {
+  DOC_TRACE("DOC: Deleting", this);
   removeFromContext();
 }
 
@@ -75,10 +80,31 @@ void Doc::setContext(Context* ctx)
   removeFromContext();
 
   m_ctx = ctx;
-  if (ctx)
+  if (ctx) {
+    DOC_TRACE("DOC: Removing as fully backed up", this);
+
+    // Remove the flag that indicates that this doc is fully backed
+    // up, because now we are inside a context, so the user can change
+    // it again and the backup will be outdated.
+    if (m_flags & kFullyBackedUp)
+      m_flags ^= kFullyBackedUp;
+
     ctx->documents().add(this);
+  }
 
   onContextChanged();
+}
+
+void Doc::setTransaction(Transaction* transaction)
+{
+  if (transaction) {
+    ASSERT(!m_transaction);
+    m_transaction = transaction;
+  }
+  else {
+    ASSERT(m_transaction);
+    m_transaction = nullptr;
+  }
 }
 
 DocApi Doc::getApi(Transaction& transaction)
@@ -124,6 +150,13 @@ void Doc::notifyColorSpaceChanged()
   DocEvent ev(this);
   ev.sprite(sprite());
   notify_observers<DocEvent&>(&DocObserver::onColorSpaceChanged, ev);
+}
+
+void Doc::notifyPaletteChanged()
+{
+  DocEvent ev(this);
+  ev.sprite(sprite());
+  notify_observers<DocEvent&>(&DocObserver::onPaletteChanged, ev);
 }
 
 void Doc::notifySpritePixelsModified(Sprite* sprite, const gfx::Region& region, frame_t frame)
@@ -180,6 +213,12 @@ void Doc::notifySelectionChanged()
   notify_observers<DocEvent&>(&DocObserver::onSelectionChanged, ev);
 }
 
+void Doc::notifySelectionBoundariesChanged()
+{
+  DocEvent ev(this);
+  notify_observers<DocEvent&>(&DocObserver::onSelectionBoundariesChanged, ev);
+}
+
 bool Doc::isModified() const
 {
   return !m_undo->isSavedState();
@@ -221,16 +260,34 @@ void Doc::setInhibitBackup(const bool inhibitBackup)
     m_flags &= ~kInhibitBackup;
 }
 
+void Doc::markAsBackedUp()
+{
+  DOC_TRACE("DOC: Mark as fully backed up", this);
+
+  m_flags |= kFullyBackedUp;
+}
+
+bool Doc::isFullyBackedUp() const
+{
+  return (m_flags & kFullyBackedUp ? true: false);
+}
+
 //////////////////////////////////////////////////////////////////////
 // Loaded options from file
 
-void Doc::setFormatOptions(const base::SharedPtr<FormatOptions>& format_options)
+void Doc::setFormatOptions(const FormatOptionsPtr& format_options)
 {
   m_format_options = format_options;
 }
 
 //////////////////////////////////////////////////////////////////////
 // Boundaries
+
+void Doc::destroyMaskBoundaries()
+{
+  m_maskBoundaries.reset();
+  notifySelectionBoundariesChanged();
+}
 
 void Doc::generateMaskBoundaries(const Mask* mask)
 {
@@ -247,13 +304,12 @@ void Doc::generateMaskBoundaries(const Mask* mask)
   ASSERT(mask);
 
   if (!mask->isEmpty()) {
-    m_maskBoundaries.reset(new MaskBoundaries(mask->bitmap()));
-    m_maskBoundaries->offset(mask->bounds().x,
-                             mask->bounds().y);
+    m_maskBoundaries.regen(mask->bitmap());
+    m_maskBoundaries.offset(mask->bounds().x,
+                            mask->bounds().y);
   }
 
-  // TODO move this to the exact place where selection is modified.
-  notifySelectionChanged();
+  notifySelectionBoundariesChanged();
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -261,7 +317,9 @@ void Doc::generateMaskBoundaries(const Mask* mask)
 
 void Doc::setMask(const Mask* mask)
 {
-  m_mask.reset(new Mask(*mask));
+  ASSERT(mask);
+
+  m_mask->copyFrom(mask);
   m_flags |= kMaskVisible;
 
   resetTransformation();
@@ -271,7 +329,6 @@ bool Doc::isMaskVisible() const
 {
   return
     (m_flags & kMaskVisible) && // The mask was not hidden by the user explicitly
-    m_mask &&                   // The mask does exist
     !m_mask->isEmpty();         // The mask is not empty
 }
 
@@ -298,10 +355,7 @@ void Doc::setTransformation(const Transformation& transform)
 
 void Doc::resetTransformation()
 {
-  if (m_mask)
-    m_transformation = Transformation(gfx::RectF(m_mask->bounds()));
-  else
-    m_transformation = Transformation();
+  m_transformation = Transformation(gfx::RectF(m_mask->bounds()));
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -345,8 +399,8 @@ void Doc::copyLayerContent(const Layer* sourceLayer0, Doc* destDoc, Layer* destL
 
       auto it = linked.find(sourceCel->data()->id());
       if (it != linked.end()) {
-        newCel.reset(Cel::createLink(it->second));
-        newCel->setFrame(sourceCel->frame());
+        newCel.reset(Cel::MakeLink(sourceCel->frame(),
+                                   it->second));
       }
       else {
         newCel.reset(create_cel_copy(sourceCel,
@@ -414,8 +468,8 @@ Doc* Doc::duplicate(DuplicateType type) const
     spriteCopy->setFrameDuration(i, sourceSprite->frameDuration(i));
 
   // Copy frame tags
-  for (const FrameTag* tag : sourceSprite->frameTags())
-    spriteCopy->frameTags().add(new FrameTag(*tag));
+  for (const Tag* tag : sourceSprite->tags())
+    spriteCopy->tags().add(new Tag(*tag));
 
   // Copy color palettes
   {
@@ -448,7 +502,8 @@ Doc* Doc::duplicate(DuplicateType type) const
             (spriteCopy,
              sourceSprite->root(),
              gfx::Rect(0, 0, sourceSprite->width(), sourceSprite->height()),
-             frame_t(0), sourceSprite->lastFrame());
+             frame_t(0), sourceSprite->lastFrame(),
+             Preferences::instance().experimental.newBlend());
 
         // Add and select the new flat layer
         spriteCopy->root()->addLayer(flatLayer);
@@ -508,14 +563,6 @@ void Doc::updateOSColorSpace(bool appWideSignal)
       context() &&
       context()->activeDocument() == this) {
     App::instance()->ColorSpaceChange();
-  }
-
-  if (ui::is_ui_thread()) {
-    // As the color space has changed, we might need to upate the
-    // current palette (because the color space conversion might be
-    // came from a cmd::ConvertColorProfile, so the palette might be
-    // changed). This might generate a PaletteChange() signal.
-    app_update_current_palette();
   }
 }
 

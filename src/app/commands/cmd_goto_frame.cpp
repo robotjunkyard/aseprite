@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -17,8 +18,9 @@
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/editor_customization_delegate.h"
 #include "app/ui/search_entry.h"
-#include "doc/frame_tag.h"
+#include "base/clamp.h"
 #include "doc/sprite.h"
+#include "doc/tag.h"
 #include "ui/combobox.h"
 #include "ui/window.h"
 
@@ -66,10 +68,10 @@ public:
 protected:
   frame_t onGetFrame(Editor* editor) override {
     frame_t frame = editor->frame();
-    FrameTag* tag = editor
+    Tag* tag = editor
       ->getCustomizationDelegate()
-      ->getFrameTagProvider()
-      ->getFrameTagByFrame(frame, false);
+      ->getTagProvider()
+      ->getTagByFrame(frame, false);
     return (tag ? tag->fromFrame(): 0);
   }
 };
@@ -108,10 +110,10 @@ public:
 protected:
   frame_t onGetFrame(Editor* editor) override {
     frame_t frame = editor->frame();
-    FrameTag* tag = editor
+    Tag* tag = editor
       ->getCustomizationDelegate()
-      ->getFrameTagProvider()
-      ->getFrameTagByFrame(frame, false);
+      ->getTagProvider()
+      ->getTagByFrame(frame, false);
     frame_t first = (tag ? tag->fromFrame(): 0);
     frame_t last = (tag ? tag->toFrame(): editor->sprite()->lastFrame());
 
@@ -126,10 +128,10 @@ public:
 protected:
   frame_t onGetFrame(Editor* editor) override {
     frame_t frame = editor->frame();
-    FrameTag* tag = editor
+    Tag* tag = editor
       ->getCustomizationDelegate()
-      ->getFrameTagProvider()
-      ->getFrameTagByFrame(frame, false);
+      ->getTagProvider()
+      ->getTagByFrame(frame, false);
     frame_t first = (tag ? tag->fromFrame(): 0);
     frame_t last = (tag ? tag->toFrame(): editor->sprite()->lastFrame());
 
@@ -155,10 +157,10 @@ public:
 protected:
   frame_t onGetFrame(Editor* editor) override {
     frame_t frame = editor->frame();
-    FrameTag* tag = editor
+    Tag* tag = editor
       ->getCustomizationDelegate()
-      ->getFrameTagProvider()
-      ->getFrameTagByFrame(frame, false);
+      ->getTagProvider()
+      ->getTagByFrame(frame, false);
     return (tag ? tag->toFrame(): editor->sprite()->lastFrame());
   }
 };
@@ -173,8 +175,8 @@ private:
   // TODO this combobox is similar to FileSelector::CustomFileNameEntry
   class TagsEntry : public ComboBox {
   public:
-    TagsEntry(FrameTags& frameTags)
-      : m_frameTags(frameTags) {
+    TagsEntry(Tags& tags)
+      : m_tags(tags) {
       setEditable(true);
       getEntryWidget()->Change.connect(&TagsEntry::onEntryChange, this);
       fill(true);
@@ -182,20 +184,20 @@ private:
 
   private:
     void fill(bool all) {
-      removeAllItems();
+      deleteAllItems();
 
       MatchWords match(getEntryWidget()->text());
 
       bool matchAny = false;
-      for (const auto& frameTag : m_frameTags) {
-        if (match(frameTag->name())) {
+      for (const auto& tag : m_tags) {
+        if (match(tag->name())) {
           matchAny = true;
           break;
         }
       }
-      for (const auto& frameTag : m_frameTags) {
-        if (all || !matchAny || match(frameTag->name()))
-          addItem(frameTag->name());
+      for (const auto& tag : m_tags) {
+        if (all || !matchAny || match(tag->name()))
+          addItem(tag->name());
       }
     }
 
@@ -206,7 +208,7 @@ private:
         openListBox();
     }
 
-    FrameTags& m_frameTags;
+    Tags& m_tags;
   };
 
   void onLoadParams(const Params& params) override {
@@ -224,7 +226,7 @@ private:
 
     if (m_showUI) {
       app::gen::GotoFrame window;
-      TagsEntry combobox(editor->sprite()->frameTags());
+      TagsEntry combobox(editor->sprite()->tags());
 
       window.framePlaceholder()->addChild(&combobox);
 
@@ -245,17 +247,19 @@ private:
       // Search a tag name
       else {
         MatchWords match(text);
-        for (const auto& frameTag : editor->sprite()->frameTags()) {
-          if (match(frameTag->name())) {
+        for (const auto& tag : editor->sprite()->tags()) {
+          if (match(tag->name())) {
             m_frame =
-              frameTag->fromFrame()+docPref.timeline.firstFrame();
+              tag->fromFrame()+docPref.timeline.firstFrame();
             break;
           }
         }
       }
     }
 
-    return MID(0, m_frame-docPref.timeline.firstFrame(), editor->sprite()->lastFrame());
+    return base::clamp(
+      m_frame-docPref.timeline.firstFrame(),
+      0, editor->sprite()->lastFrame());
   }
 
 private:

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2015-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -17,6 +18,7 @@
 #include "app/modules/gui.h"
 #include "app/pref/preferences.h"
 #include "app/tx.h"
+#include "base/clamp.h"
 #include "base/convert_to.h"
 #include "doc/algorithm/modify_selection.h"
 #include "doc/brush_type.h"
@@ -111,7 +113,7 @@ void ModifySelectionCommand::onExecute(Context* context)
       return;
 
     quantity = window.quantity()->textInt();
-    quantity = MID(1, quantity, 100);
+    quantity = base::clamp(quantity, 1, 100);
 
     brush = (window.circle()->isSelected() ? doc::kCircleBrushType:
                                              doc::kSquareBrushType);
@@ -143,7 +145,6 @@ void ModifySelectionCommand::onExecute(Context* context)
   tx(new cmd::SetMask(document, mask.get()));
   tx.commit();
 
-  document->generateMaskBoundaries();
   update_screen_for_document(document);
 }
 

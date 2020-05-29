@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -20,8 +21,8 @@
 #include "base/convert_to.h"
 #include "base/fs.h"
 #include "base/string.h"
-#include "doc/frame_tag.h"
 #include "doc/selected_frames.h"
+#include "doc/tag.h"
 #include "fmt/format.h"
 #include "ui/alert.h"
 
@@ -60,7 +61,12 @@ ExportFileWindow::ExportFileWindow(const Doc* doc)
   forTwitter()->setSelected(m_docPref.saveCopy.forTwitter());
   adjustResize()->setVisible(false);
 
-  updateAniDir();
+  // Here we don't call updateAniDir() because it's already filled and
+  // set by the function fill_anidir_combobox(). So if the user
+  // exported a tag with a specific AniDir, we want to keep the option
+  // in the preference (instead of the tag's AniDir).
+  //updateAniDir();
+
   updateAdjustResizeButton();
 
   outputFilename()->Change.connect(
@@ -96,6 +102,7 @@ void ExportFileWindow::savePref()
   m_docPref.saveCopy.filename(outputFilenameValue());
   m_docPref.saveCopy.resizeScale(resizeValue());
   m_docPref.saveCopy.layer(layersValue());
+  m_docPref.saveCopy.aniDir(aniDirValue());
   m_docPref.saveCopy.frameTag(framesValue());
   m_docPref.saveCopy.applyPixelRatio(applyPixelRatio());
   m_docPref.saveCopy.forTwitter(isForTwitter());
@@ -163,10 +170,10 @@ void ExportFileWindow::updateAniDir()
       framesValue != kAllFrames &&
       framesValue != kSelectedFrames) {
     SelectedFrames selFrames;
-    FrameTag* frameTag = calculate_selected_frames(
+    Tag* tag = calculate_selected_frames(
       UIContext::instance()->activeSite(), framesValue, selFrames);
-    if (frameTag)
-      anidir()->setSelectedItemIndex(int(frameTag->aniDir()));
+    if (tag)
+      anidir()->setSelectedItemIndex(int(tag->aniDir()));
   }
   else
     anidir()->setSelectedItemIndex(int(doc::AniDir::FORWARD));

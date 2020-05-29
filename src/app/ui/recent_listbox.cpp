@@ -82,7 +82,7 @@ protected:
     setTextQuiet(m_path);
     gfx::Size sz2 = theme->calcSizeHint(this, styleDetail);
 
-    ev.setSizeHint(gfx::Size(sz1.w+sz2.w, MAX(sz1.h, sz2.h)));
+    ev.setSizeHint(gfx::Size(sz1.w+sz2.w, std::max(sz1.h, sz2.h)));
   }
 
   bool onProcessMessage(Message* msg) override {
@@ -308,7 +308,7 @@ void RecentFilesListBox::onClick(const std::string& path)
   Command* command = Commands::instance()->byId(CommandId::OpenFile());
   Params params;
   params.set("filename", path.c_str());
-  UIContext::instance()->executeCommand(command, params);
+  UIContext::instance()->executeCommandFromMenuOrShortcut(command, params);
 }
 
 void RecentFilesListBox::onUpdateRecentListFromUIItems(const base::paths& pinnedPaths,
@@ -346,7 +346,7 @@ void RecentFoldersListBox::onClick(const std::string& path)
   Command* command = Commands::instance()->byId(CommandId::OpenFile());
   Params params;
   params.set("folder", path.c_str());
-  UIContext::instance()->executeCommand(command, params);
+  UIContext::instance()->executeCommandFromMenuOrShortcut(command, params);
 }
 
 void RecentFoldersListBox::onUpdateRecentListFromUIItems(const base::paths& pinnedPaths,

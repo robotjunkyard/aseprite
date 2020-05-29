@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -39,7 +39,6 @@
 #include "base/clamp.h"
 #include "base/fs.h"
 #include "base/memory.h"
-#include "base/shared_ptr.h"
 #include "base/string.h"
 #include "doc/sprite.h"
 #include "os/display.h"
@@ -122,7 +121,7 @@ static bool create_main_display(bool gpuAccel,
   try {
     if (w > 0 && h > 0) {
       main_display = os::instance()->createDisplay(
-        w, h, (scale == 0 ? 2: MID(1, scale, 4)));
+        w, h, (scale == 0 ? 2: base::clamp(scale, 1, 4)));
     }
   }
   catch (const os::DisplayCreationException& e) {
@@ -202,6 +201,8 @@ int init_module_gui()
   // Set graphics options for next time
   save_gui_config();
 
+  update_displays_color_profile_from_preferences();
+
   return 0;
 }
 
@@ -217,6 +218,44 @@ void exit_module_gui()
   delete gui_theme;
 
   main_display->dispose();
+}
+
+void update_displays_color_profile_from_preferences()
+{
+  auto system = os::instance();
+
+  gen::WindowColorProfile windowProfile;
+  if (Preferences::instance().color.manage())
+    windowProfile = Preferences::instance().color.windowProfile();
+  else
+    windowProfile = gen::WindowColorProfile::SRGB;
+
+  switch (windowProfile) {
+    case gen::WindowColorProfile::MONITOR:
+      system->setDisplaysColorSpace(nullptr);
+      break;
+    case gen::WindowColorProfile::SRGB:
+      system->setDisplaysColorSpace(
+        system->createColorSpace(gfx::ColorSpace::MakeSRGB()));
+      break;
+    case gen::WindowColorProfile::SPECIFIC: {
+      std::string name =
+        Preferences::instance().color.windowProfileName();
+
+      std::vector<os::ColorSpacePtr> colorSpaces;
+      system->listColorSpaces(colorSpaces);
+
+      for (auto& cs : colorSpaces) {
+        auto gfxCs = cs->gfxColorSpace();
+        if (gfxCs->type() == gfx::ColorSpace::ICC &&
+            gfxCs->name() == name) {
+          system->setDisplaysColorSpace(cs);
+          break;
+        }
+      }
+      break;
+    }
+  }
 }
 
 static void load_gui_config(int& w, int& h, bool& maximized,
@@ -297,7 +336,7 @@ void save_window_pos(Widget* window, const char *section)
 // TODO Replace this with new theme styles
 Widget* setup_mini_font(Widget* widget)
 {
-  SkinPropertyPtr skinProp = get_skin_property(widget);
+  auto skinProp = get_skin_property(widget);
   skinProp->setMiniFont();
   return widget;
 }
@@ -305,7 +344,7 @@ Widget* setup_mini_font(Widget* widget)
 // TODO Replace this with new theme styles
 Widget* setup_mini_look(Widget* widget)
 {
-  SkinPropertyPtr skinProp = get_skin_property(widget);
+  auto skinProp = get_skin_property(widget);
   skinProp->setLook(MiniLook);
   return widget;
 }
@@ -329,13 +368,12 @@ bool CustomizedGuiManager::onProcessMessage(Message* msg)
 {
   switch (msg->type()) {
 
-    case kCloseDisplayMessage:
-      {
-        // Execute the "Exit" command.
-        Command* command = Commands::instance()->byId(CommandId::Exit());
-        UIContext::instance()->executeCommand(command);
-      }
+    case kCloseDisplayMessage: {
+      // Execute the "Exit" command.
+      Command* command = Commands::instance()->byId(CommandId::Exit());
+      UIContext::instance()->executeCommandFromMenuOrShortcut(command);
       break;
+    }
 
     case kDropFilesMessage:
       // Files are processed only when the main window is the current
@@ -371,7 +409,7 @@ bool CustomizedGuiManager::onProcessMessage(Message* msg)
               Command* cmd = Commands::instance()->byId(CommandId::Options());
               Params params;
               params.set("installExtension", fn.c_str());
-              ctx->executeCommand(cmd, params);
+              ctx->executeCommandFromMenuOrShortcut(cmd, params);
             }
             // Other extensions will be handled as an image/sprite
             else {
@@ -379,7 +417,7 @@ bool CustomizedGuiManager::onProcessMessage(Message* msg)
               Params params;
               params.set("filename", fn.c_str());
               params.set("repeat_checkbox", "true");
-              ctx->executeCommand(&cmd, params);
+              ctx->executeCommandFromMenuOrShortcut(&cmd, params);
 
               // Remove all used file names from the "dropped files"
               for (const auto& usedFn : cmd.usedFiles()) {
@@ -462,7 +500,7 @@ bool CustomizedGuiManager::onProcessMessage(Message* msg)
               if (getForegroundWindow() == App::instance()->mainWindow()) {
                 // OK, so we can execute the command represented
                 // by the pressed-key in the message...
-                UIContext::instance()->executeCommand(
+                UIContext::instance()->executeCommandFromMenuOrShortcut(
                   command, key->params());
                 return true;
               }
@@ -567,10 +605,12 @@ bool CustomizedGuiManager::onProcessDevModeKeyDown(KeyMessage* msg)
       App::instance()->dataRecovery()->activeSession() &&
       current_editor &&
       current_editor->document()) {
-    App::instance()
+    Doc* doc = App::instance()
       ->dataRecovery()
       ->activeSession()
-      ->restoreBackupById(current_editor->document()->id());
+      ->restoreBackupById(current_editor->document()->id(), nullptr);
+    if (doc)
+      UIContext::instance()->documents().add(doc);
     return true;
   }
 #endif  // ENABLE_DATA_RECOVERY

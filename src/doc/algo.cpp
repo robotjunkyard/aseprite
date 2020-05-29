@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (c) 2018-2020 Igara Studio S.A.
 // Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -11,7 +11,7 @@
 
 #include "doc/algo.h"
 
-#include "base/base.h"
+#include "base/clamp.h"
 #include "base/debug.h"
 
 #include <algorithm>
@@ -65,6 +65,54 @@ void algo_line_perfect(int x1, int y1, int x2, int y2, void* data, AlgoPixel pro
   }
 }
 
+// Special version of the perfect line algorithm specially done for
+// kLineBrushType so the whole line looks continuous without holes.
+//
+// TOOD in a future we should convert lines into scanlines and render
+//      scanlines instead of drawing the brush on each pixel, that
+//      would fix all cases
+void algo_line_perfect_with_fix_for_line_brush(int x1, int y1, int x2, int y2, void* data, AlgoPixel proc)
+{
+  bool yaxis;
+
+  if (ABS(y2-y1) > ABS(x2-x1)) {
+    std::swap(x1, y1);
+    std::swap(x2, y2);
+    yaxis = true;
+  }
+  else
+    yaxis = false;
+
+  const int w = ABS(x2-x1)+1;
+  const int h = ABS(y2-y1)+1;
+  const int dx = SGN(x2-x1);
+  const int dy = SGN(y2-y1);
+
+  int e = 0;
+  int y = y1;
+
+  x2 += dx;
+
+  for (int x=x1; x!=x2; x+=dx) {
+    if (yaxis)
+      proc(y, x, data);
+    else
+      proc(x, y, data);
+
+    e += h;
+    if (e >= w) {
+      y += dy;
+      e -= w;
+      if (x+dx != x2) {
+        if (yaxis)
+          proc(y, x, data);
+        else
+          proc(x, y, data);
+      }
+    }
+  }
+}
+
 // Line code based on Alois Zingl work released under the
 // MIT license http://members.chello.at/easyfilter/bresenham.html
 void algo_line_continuous(int x0, int y0, int x1, int y1, void* data, AlgoPixel proc)
@@ -91,175 +139,98 @@ void algo_line_continuous(int x0, int y0, int x1, int y1, void* data, AlgoPixel 
   }
 }
 
-/* Additional helper functions for the ellipse-drawing helper function
-   below corresponding to routines in Bresenham's algorithm. */
-namespace {
-  int bresenham_ellipse_error(int rx, int ry, int x, int y) {
-    return x*x*ry*ry + y*y*rx*rx - rx*rx*ry*ry;
-  }
-
-  // Initialize positions x and y for Bresenham's algorithm
-  void bresenham_ellipse_init(int rx, int ry, int& x, int& y) {
-    // Start at the fatter pole
-    if (rx > ry) {
-      x = 0;
-      y = ry;
-    }
-    else {
-      x = rx;
-      y = 0;
-    }
-  }
-
-  // Move to next pixel to draw, according to Bresenham's algorithm
-  void bresenham_ellipse_step(int rx, int ry, int& x, int& y) {
-    // Move towards the skinnier pole. Having 2 cases isn't needed, but it ensures
-    // swapping rx and ry is the same as rotating 90 degrees.
-    if (rx > ry) {
-      int ex = bresenham_ellipse_error(rx, ry, x, y-1);
-      int ey = bresenham_ellipse_error(rx, ry, x+1, y);
-      int exy = bresenham_ellipse_error(rx, ry, x+1, y-1);
-      if (ex + exy < 0) ++x;
-      if (ey + exy > 0) --y;
-    }
-    else {
-      int ex = bresenham_ellipse_error(rx, ry, x, y+1);
-      int ey = bresenham_ellipse_error(rx, ry, x-1, y);
-      int exy = bresenham_ellipse_error(rx, ry, x-1, y+1);
-      if (ex + exy > 0) --x;
-      if (ey + exy < 0) ++y;
-    }
-  }
-}
-
-/* Helper function for the ellipse drawing routines. Calculates the
-   points of an ellipse which fits onto the rectangle specified by x1,
-   y1, x2 and y2, and calls the specified routine for each one. The
-   output proc has the same format as for do_line, and if the width or
-   height of the ellipse is only 1 or 2 pixels, do_line will be
-   called.
-
-   Copyright (C) 2002 by Elias Pschernig (eliaspschernig@aon.at)
-   for Allegro 4.x.
-
-   Adapted for ASEPRITE by David A. Capello. */
-void algo_ellipse(int x1, int y1, int x2, int y2, void *data, AlgoPixel proc)
+// Special version of the continuous line algorithm specially done for
+// kLineBrushType so the whole line looks continuous without holes.
+void algo_line_continuous_with_fix_for_line_brush(int x0, int y0, int x1, int y1, void* data, AlgoPixel proc)
 {
-  int mx, my, rx, ry;
-  int x, y;
-
-  /* Cheap hack to get elllipses with integer diameter, by just offsetting
-   * some quadrants by one pixel. */
-  int mx2, my2;
-
-  mx = (x1 + x2) / 2;
-  mx2 = (x1 + x2 + 1) / 2;
-  my = (y1 + y2) / 2;
-  my2 = (y1 + y2 + 1) / 2;
-  rx = ABS(x1 - x2);
-  ry = ABS(y1 - y2);
-
-  if (rx == 1) { algo_line_perfect(x2, y1, x2, y2, data, proc); rx--; }
-  if (rx == 0) { algo_line_perfect(x1, y1, x1, y2, data, proc); return; }
-
-  if (ry == 1) { algo_line_perfect(x1, y2, x2, y2, data, proc); ry--; }
-  if (ry == 0) { algo_line_perfect(x1, y1, x2, y1, data, proc); return; }
-
-  rx /= 2;
-  ry /= 2;
-
-  /* Draw the 4 poles. */
-  proc(mx, my2 + ry, data);
-  proc(mx, my - ry, data);
-  proc(mx2 + rx, my, data);
-  proc(mx - rx, my, data);
-
-  /* For even diameter axis, double the poles. */
-  if (mx != mx2) {
-    proc(mx2, my2 + ry, data);
-    proc(mx2, my - ry, data);
-  }
-
-  if (my != my2) {
-    proc(mx2 + rx, my2, data);
-    proc(mx - rx, my2, data);
-  }
-
-  /* Initialize drawing position at a pole. */
-  bresenham_ellipse_init(rx, ry, x, y);
+  int dx =  ABS(x1-x0), sx = (x0 < x1 ? 1: -1);
+  int dy = -ABS(y1-y0), sy = (y0 < y1 ? 1: -1);
+  int err = dx+dy, e2;                                  // error value e_xy
+  bool x_changed;
 
   for (;;) {
-    /* Step to the next pixel to draw. */
-    bresenham_ellipse_step(rx, ry, x, y);
+    x_changed = false;
 
-    /* Edge conditions */
-    if (y == 0 && x < rx) ++y; // don't move to horizontal radius except at pole
-    if (x == 0 && y < ry) ++x; // don't move to vertical radius except at pole
-    if (y <= 0 || x <= 0) break; // stop before pole, since it's already drawn
-
-    /* Process pixel */
-    proc(mx2 + x, my - y, data);
-    proc(mx - x, my - y, data);
-    proc(mx2 + x, my2 + y, data);
-    proc(mx - x, my2 + y, data);
+    proc(x0, y0, data);
+    e2 = 2*err;
+    if (e2 >= dy) {                                       // e_xy+e_x > 0
+      if (x0 == x1)
+        break;
+      err += dy;
+      x0 += sx;
+      x_changed = true;
+    }
+    if (e2 <= dx) {                                       // e_xy+e_y < 0
+      if (y0 == y1)
+        break;
+      err += dx;
+      if (x_changed)
+        proc(x0, y0, data);
+      y0 += sy;
+    }
   }
 }
 
-void algo_ellipsefill(int x1, int y1, int x2, int y2, void *data, AlgoHLine proc)
-{
-  int mx, my, rx, ry;
-  int x, y;
-
-  /* Cheap hack to get elllipses with integer diameter, by just offsetting
-   * some quadrants by one pixel. */
-  int mx2, my2;
-
-  mx = (x1 + x2) / 2;
-  mx2 = (x1 + x2 + 1) / 2;
-  my = (y1 + y2) / 2;
-  my2 = (y1 + y2 + 1) / 2;
-  rx = ABS (x1 - x2);
-  ry = ABS (y1 - y2);
-
-  if (rx == 1) { int c; for (c=y1; c<=y2; c++) proc(x2, c, x2, data); rx--; }
-  if (rx == 0) { int c; for (c=y1; c<=y2; c++) proc(x1, c, x1, data); return; }
-
-  if (ry == 1) { proc(x1, y2, x2, data); ry--; }
-  if (ry == 0) { proc(x1, y1, x2, data); return; }
-
-  rx /= 2;
-  ry /= 2;
-
-  /* Draw the north and south poles (possibly 2 pixels) */
-  proc(mx, my2 + ry, mx2, data);
-  proc(mx, my - ry, mx2, data);
-
-  /* Draw the equator (possibly width 2) */
-  proc(mx - rx, my, mx2 + rx, data);
-  if (my != my2) proc(mx - rx, my2, mx2 + rx, data);
-
-  /* Initialize drawing position at a pole. */
-  bresenham_ellipse_init(rx, ry, x, y);
-
-  for (;;) {
-    /* Step to the next pixel to draw. */
-    bresenham_ellipse_step(rx, ry, x, y);
-
-    /* Edge conditions */
-    if (y == 0 && x < rx) ++y; // don't move to horizontal radius except at pole
-    if (x == 0 && y < ry) ++x; // don't move to vertical radius except at pole
-    if (y <= 0 || x <= 0) break; // stop before pole, since it's already drawn
-
-    /* Draw the north and south 'lines of latitude' */
-    proc(mx - x, my - y, mx2 + x, data);
-    proc(mx - x, my2 + y, mx2 + x, data);
-  }
-}
-
-// Rotated ellipse code based on Alois Zingl work released under the
-// MIT license http://members.chello.at/easyfilter/bresenham.html
+// Ellipse code based on Alois Zingl work released under the MIT
+// license http://members.chello.at/easyfilter/bresenham.html
 //
 // Adapted for Aseprite by David Capello
+
+void algo_ellipse(int x0, int y0, int x1, int y1, void* data, AlgoPixel proc)
+{
+  long a = abs(x1-x0), b = abs(y1-y0), b1 = b&1;                 // diameter
+  double dx = 4*(1.0-a)*b*b, dy = 4*(b1+1)*a*a;           // error increment
+  double err = dx+dy+b1*a*a, e2;                          // error of 1.step
+
+  if (x0 > x1) { x0 = x1; x1 += a; }        // if called with swapped points
+  if (y0 > y1) y0 = y1;                                  // .. exchange them
+  y0 += (b+1)/2; y1 = y0-b1;                               // starting pixel
+  a = 8*a*a; b1 = 8*b*b;
+
+  do {
+    proc(x1, y0, data);                                      //   I. Quadrant
+    proc(x0, y0, data);                                      //  II. Quadrant
+    proc(x0, y1, data);                                      // III. Quadrant
+    proc(x1, y1, data);                                      //  IV. Quadrant
+    e2 = 2*err;
+    if (e2 <= dy) { y0++; y1--; err += dy += a; }                 // y step
+    if (e2 >= dx || 2*err > dy) { x0++; x1--; err += dx += b1; }  // x step
+  } while (x0 <= x1);
+
+  while (y0-y1 <= b) {          // too early stop of flat ellipses a=1
+    proc(x0-1, y0, data);       // -> finish tip of ellipse
+    proc(x1+1, y0++, data);
+    proc(x0-1, y1, data);
+    proc(x1+1, y1--, data);
+  }
+}
+
+void algo_ellipsefill(int x0, int y0, int x1, int y1, void* data, AlgoHLine proc)
+{
+  long a = abs(x1-x0), b = abs(y1-y0), b1 = b&1;                 // diameter
+  double dx = 4*(1.0-a)*b*b, dy = 4*(b1+1)*a*a;           // error increment
+  double err = dx+dy+b1*a*a, e2;                          // error of 1.step
+
+  if (x0 > x1) { x0 = x1; x1 += a; }        // if called with swapped points
+  if (y0 > y1) y0 = y1;                                  // .. exchange them
+  y0 += (b+1)/2; y1 = y0-b1;                               // starting pixel
+  a = 8*a*a; b1 = 8*b*b;
+
+  do {
+    proc(x0, y0, x1, data);
+    proc(x0, y1, x1, data);
+    e2 = 2*err;
+    if (e2 <= dy) { y0++; y1--; err += dy += a; }                 // y step
+    if (e2 >= dx || 2*err > dy) { x0++; x1--; err += dx += b1; }  // x step
+  } while (x0 <= x1);
+
+  while (y0-y1 <= b) {          // too early stop of flat ellipses a=1
+    proc(x0-1, y0, x0-1, data);       // -> finish tip of ellipse
+    proc(x1+1, y0++, x1+1, data);
+    proc(x0-1, y1, x0-1, data);
+    proc(x1+1, y1--, x1+1, data);
+  }
+}
 
 static void draw_quad_rational_bezier_seg(int x0, int y0,
                                           int x1, int y1,
@@ -358,7 +329,7 @@ static void draw_rotated_ellipse_rect(int x0, int y0, int x1, int y1, double zd,
   if (w != 0.0)
     w = (w-zd) / (w+w); // squared weight of P1
 
-  w = MID(0.0, w, 1.0);
+  w = base::clamp(w, 0.0, 1.0);
 
   xd = std::floor(w*xd + 0.5);
   yd = std::floor(w*yd + 0.5);
@@ -394,14 +365,14 @@ void fill_rotated_ellipse(int cx, int cy, int a, int b, double angle, void* data
     Rows(int y0, int nrows)
       : y0(y0), row(nrows, std::make_pair(1, -1)) { }
     void update(int x, int y) {
-      int i = MID(0, y-y0, row.size()-1);
+      int i = base::clamp(y-y0, 0, int(row.size()-1));
       auto& r = row[i];
       if (r.first > r.second) {
         r.first = r.second = x;
       }
       else {
-        r.first = MIN(r.first, x);
-        r.second = MAX(r.second, x);
+        r.first = std::min(r.first, x);
+        r.second = std::max(r.second, x);
       }
     }
   };
@@ -565,7 +536,7 @@ double algo_spline_get_y(double x0, double y0, double x1, double y1,
   x = x0;
   y = y0;
 
-  out_x = old_x = x0;
+  old_x = x0;
   out_y = old_y = y0;
 
   x += .5;
@@ -641,8 +612,6 @@ double algo_spline_get_tan(double x0, double y0, double x1, double y1,
   dy = ydt3_term - ydt2_term + dt * 3 * (y1 - y0);
   x = x0;
   y = y0;
-
-  out_x = x0;
 
   old_x = x0;
   old_dx = dx;

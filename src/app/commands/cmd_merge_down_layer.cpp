@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -46,16 +47,20 @@ MergeDownLayerCommand::MergeDownLayerCommand()
 
 bool MergeDownLayerCommand::onEnabled(Context* context)
 {
-  ContextWriter writer(context);
-  Sprite* sprite(writer.sprite());
+  if (!context->checkFlags(ContextFlags::ActiveDocumentIsWritable |
+                           ContextFlags::HasActiveSprite))
+    return false;
+
+  const ContextReader reader(context);
+  const Sprite* sprite(reader.sprite());
   if (!sprite)
     return false;
 
-  Layer* src_layer = writer.layer();
+  const Layer* src_layer = reader.layer();
   if (!src_layer || !src_layer->isImage())
     return false;
 
-  Layer* dst_layer = src_layer->getPrevious();
+  const Layer* dst_layer = src_layer->getPrevious();
   if (!dst_layer || !dst_layer->isImage())
     return false;
 
@@ -137,11 +142,13 @@ void MergeDownLayerCommand::onExecute(Context* context)
           opacity,
           src_layer->blendMode());
 
-        tx(new cmd::SetCelPosition(dst_cel,
-            bounds.x, bounds.y));
-
+        // First unlink the dst_cel
         if (dst_cel->links())
           tx(new cmd::UnlinkCel(dst_cel));
+
+        // Then modify the dst_cel
+        tx(new cmd::SetCelPosition(dst_cel,
+            bounds.x, bounds.y));
 
         tx(new cmd::ReplaceImage(sprite,
             dst_cel->imageRef(), new_image));
@@ -153,7 +160,11 @@ void MergeDownLayerCommand::onExecute(Context* context)
   document->getApi(tx).removeLayer(src_layer); // src_layer is deleted inside removeLayer()
 
   tx.commit();
-  update_screen_for_document(document);
+
+#ifdef ENABLE_UI
+  if (context->isUIAvailable())
+    update_screen_for_document(document);
+#endif
 }
 
 Command* CommandFactory::createMergeDownLayerCommand()

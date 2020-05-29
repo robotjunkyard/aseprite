@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,6 +9,7 @@
 #define APP_UTIL_CLIPBOARD_H_INCLUDED
 #pragma once
 
+#include "doc/cel_list.h"
 #include "gfx/point.h"
 #include "gfx/size.h"
 #include "ui/base.h"
@@ -21,10 +23,12 @@ namespace doc {
 }
 
 namespace app {
-  class Doc;
+  class Context;
   class ContextReader;
   class ContextWriter;
+  class Doc;
   class DocRange;
+  class Tx;
 
   namespace clipboard {
     using namespace doc;
@@ -54,6 +58,11 @@ namespace app {
     ClipboardFormat get_current_format();
     void get_document_range_info(Doc** document, DocRange* range);
 
+    void clear_mask_from_cels(Tx& tx,
+                              Doc* doc,
+                              const doc::CelList& cels,
+                              const bool deselectMask);
+
     void clear_content();
     void cut(ContextWriter& context);
     void copy(const ContextReader& context);
@@ -61,7 +70,9 @@ namespace app {
     void copy_range(const ContextReader& context, const DocRange& range);
     void copy_image(const Image* image, const Mask* mask, const Palette* palette);
     void copy_palette(const Palette* palette, const PalettePicks& picks);
-    void paste();
+    void paste(Context* ctx, const bool interactive);
+
+    ImageRef get_image(Palette* palette);
 
     // Returns true and fills the specified "size"" with the image's
     // size in the clipboard, or return false in case that the clipboard

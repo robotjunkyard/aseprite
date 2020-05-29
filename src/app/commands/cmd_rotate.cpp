@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -154,10 +155,6 @@ protected:
 
       // Copy new mask
       api.copyToCurrentMask(new_mask.get());
-
-      // Regenerate mask
-      document()->resetTransformation();
-      document()->generateMaskBoundaries();
     }
 
     // change the sprite's size
@@ -202,30 +199,31 @@ void RotateCommand::onExecute(Context* context)
 
     // Flip the mask or current cel
     if (m_flipMask) {
+      // If we want to rotate the visible mask, we can go to
+      // MovingPixelsState (even when the range is enabled, because
+      // now PixelsMovement support ranges).
+      if (site.document()->isMaskVisible()) {
+        // Select marquee tool
+        if (tools::Tool* tool = App::instance()->toolBox()
+            ->getToolById(tools::WellKnownTools::RectangularMarquee)) {
+          ToolBar::instance()->selectTool(tool);
+          current_editor->startSelectionTransformation(gfx::Point(0, 0), m_angle);
+          return;
+        }
+      }
+
       auto range = App::instance()->timeline()->range();
       if (range.enabled())
         cels = get_unlocked_unique_cels(site.sprite(), range);
       else if (site.cel() &&
                site.layer() &&
                site.layer()->isEditable()) {
-        // If we want to rotate the visible mask for the current cel,
-        // we can go to MovingPixelsState.
-        if (site.document()->isMaskVisible()) {
-          // Select marquee tool
-          if (tools::Tool* tool = App::instance()->toolBox()
-              ->getToolById(tools::WellKnownTools::RectangularMarquee)) {
-            ToolBar::instance()->selectTool(tool);
-            current_editor->startSelectionTransformation(gfx::Point(0, 0), m_angle);
-            return;
-          }
-        }
-
         cels.push_back(site.cel());
       }
 
       if (cels.empty()) {
         StatusBar::instance()->showTip(
-          1000, Strings::statusbar_tips_all_layers_are_locked().c_str());
+          1000, Strings::statusbar_tips_all_layers_are_locked());
         return;
       }
     }
@@ -243,7 +241,6 @@ void RotateCommand::onExecute(Context* context)
       job.startJob();
       job.waitJob();
     }
-    reader.document()->generateMaskBoundaries();
     update_screen_for_document(reader.document());
   }
 }

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2015  David Capello
 //
 // This program is distributed under the terms of
@@ -10,6 +11,7 @@
 
 #include "app/cmd/set_palette.h"
 
+#include "app/doc.h"
 #include "base/serialization.h"
 #include "doc/palette.h"
 #include "doc/sprite.h"
@@ -35,11 +37,11 @@ SetPalette::SetPalette(Sprite* sprite, frame_t frame, const Palette* newPalette)
   ASSERT(diffs > 0);
 
   if (m_from >= 0 && m_to >= m_from) {
-    int oldColors = MIN(m_to+1, m_oldNColors)-m_from;
+    int oldColors = std::min(m_to+1, m_oldNColors)-m_from;
     if (oldColors > 0)
       m_oldColors.resize(oldColors);
 
-    int newColors = MIN(m_to+1, m_newNColors)-m_from;
+    int newColors = std::min(m_to+1, m_newNColors)-m_from;
     if (newColors > 0)
       m_newColors.resize(newColors);
 
@@ -75,6 +77,13 @@ void SetPalette::onUndo()
     palette->setEntry(m_from+i, m_oldColors[i]);
 
   palette->incrementVersion();
+}
+
+void SetPalette::onFireNotifications()
+{
+  doc::Sprite* sprite = this->sprite();
+  Doc* doc = static_cast<Doc*>(sprite->document());
+  doc->notifyPaletteChanged();
 }
 
 } // namespace cmd

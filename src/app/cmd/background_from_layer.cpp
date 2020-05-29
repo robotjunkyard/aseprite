@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2020  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -17,6 +18,7 @@
 #include "app/cmd/set_cel_opacity.h"
 #include "app/cmd/set_cel_position.h"
 #include "app/doc.h"
+#include "base/clamp.h"
 #include "doc/cel.h"
 #include "doc/image.h"
 #include "doc/layer.h"
@@ -45,8 +47,8 @@ void BackgroundFromLayer::onExecute()
   auto doc = static_cast<Doc*>(sprite->document());
   color_t bgcolor = doc->bgColor();
 
-  // create a temporary image to draw each frame of the new
-  // `Background' layer
+  // Create a temporary image to draw each cel of the new Background
+  // layer.
   ImageRef bg_image(Image::create(sprite->pixelFormat(),
       sprite->width(),
       sprite->height()));
@@ -54,7 +56,6 @@ void BackgroundFromLayer::onExecute()
   CelList cels;
   layer->getCels(cels);
   for (Cel* cel : cels) {
-    // get the image from the sprite's stock of images
     Image* cel_image = cel->image();
     ASSERT(cel_image);
 
@@ -63,7 +64,7 @@ void BackgroundFromLayer::onExecute()
       bg_image.get(), cel_image,
       sprite->palette(cel->frame()),
       cel->x(), cel->y(),
-      MID(0, cel->opacity(), 255),
+      base::clamp(cel->opacity(), 0, 255),
       static_cast<LayerImage*>(layer)->blendMode());
 
     // now we have to copy the new image (bg_image) to the cel...
@@ -73,19 +74,23 @@ void BackgroundFromLayer::onExecute()
     if (cel->opacity() < 255)
       executeAndAdd(new cmd::SetCelOpacity(cel, 255));
 
-    // same size of cel-image and bg-image
+    // Same size of cel image and background image, we can just
+    // replace pixels.
     if (bg_image->width() == cel_image->width() &&
         bg_image->height() == cel_image->height()) {
       executeAndAdd(new CopyRect(cel_image, bg_image.get(),
           gfx::Clip(0, 0, cel_image->bounds())));
     }
+    // In other case we have to replace the whole image (this is the
+    // most common case, a smaller transparent cel that is converted
+    // to a canvas size cel in the background)
     else {
       ImageRef bg_image2(Image::createCopy(bg_image.get()));
       executeAndAdd(new cmd::ReplaceImage(sprite, cel->imageRef(), bg_image2));
     }
   }
 
-  // Fill all empty cels with a flat-image filled with bgcolor
+  // Fill all empty cels with a flat image filled with bgcolor
   for (frame_t frame(0); frame<sprite->totalFrames(); ++frame) {
     Cel* cel = layer->cel(frame);
     if (!cel) {

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -26,6 +27,9 @@
 #include "doc/layer.h"
 #include "doc/primitives.h"
 #include "doc/sprite.h"
+#include "gfx/rect_io.h"
+
+#define EXP_TRACE(...) // TRACEARGS
 
 namespace {
 
@@ -38,8 +42,8 @@ static doc::ImageBufferPtr dst_buffer;
 
 static void destroy_buffers()
 {
-  src_buffer.reset(NULL);
-  dst_buffer.reset(NULL);
+  src_buffer.reset();
+  dst_buffer.reset();
 }
 
 static void create_buffers()
@@ -141,6 +145,10 @@ ExpandCelCanvas::~ExpandCelCanvas()
 
 void ExpandCelCanvas::commit()
 {
+  EXP_TRACE("ExpandCelCanvas::commit",
+            "validSrcRegion", m_validSrcRegion.bounds(),
+            "validDstRegion", m_validDstRegion.bounds());
+
   ASSERT(!m_closed);
   ASSERT(!m_committed);
 
@@ -204,21 +212,27 @@ void ExpandCelCanvas::commit()
       regionToPatch = &reduced;
     }
 
-    if (m_layer->isBackground()) {
-      m_transaction.execute(
-        new cmd::CopyRegion(
-          m_cel->image(),
-          m_dstImage.get(),
-          *regionToPatch,
-          m_bounds.origin()));
-    }
-    else {
-      m_transaction.execute(
-        new cmd::PatchCel(
-          m_cel,
-          m_dstImage.get(),
-          *regionToPatch,
-          m_bounds.origin()));
+    EXP_TRACE(" - regionToPatch", regionToPatch->bounds());
+
+    // Check that the region to copy or patch is not empty before we
+    // create the new cmd
+    if (!regionToPatch->isEmpty()) {
+      if (m_layer->isBackground()) {
+        m_transaction.execute(
+          new cmd::CopyRegion(
+            m_cel->image(),
+            m_dstImage.get(),
+            *regionToPatch,
+            m_bounds.origin()));
+      }
+      else {
+        m_transaction.execute(
+          new cmd::PatchCel(
+            m_cel,
+            m_dstImage.get(),
+            *regionToPatch,
+            m_bounds.origin()));
+      }
     }
   }
   else {
@@ -273,6 +287,8 @@ Image* ExpandCelCanvas::getDestCanvas()
 
 void ExpandCelCanvas::validateSourceCanvas(const gfx::Region& rgn)
 {
+  EXP_TRACE("ExpandCelCanvas::validateSourceCanvas", rgn.bounds());
+
   getSourceCanvas();
 
   gfx::Region rgnToValidate(rgn);
@@ -305,6 +321,8 @@ void ExpandCelCanvas::validateSourceCanvas(const gfx::Region& rgn)
 
 void ExpandCelCanvas::validateDestCanvas(const gfx::Region& rgn)
 {
+  EXP_TRACE("ExpandCelCanvas::validateDestCanvas", rgn.bounds());
+
   Image* src;
   int src_x, src_y;
   if ((m_flags & NeedsSource) == NeedsSource) {
@@ -351,11 +369,14 @@ void ExpandCelCanvas::validateDestCanvas(const gfx::Region& rgn)
 
 void ExpandCelCanvas::invalidateDestCanvas()
 {
+  EXP_TRACE("ExpandCelCanvas::invalidateDestCanvas");
   m_validDstRegion.clear();
 }
 
 void ExpandCelCanvas::invalidateDestCanvas(const gfx::Region& rgn)
 {
+  EXP_TRACE("ExpandCelCanvas::invalidateDestCanvas", rgn.bounds());
+
   gfx::Region rgnToInvalidate(rgn);
   rgnToInvalidate.offset(-m_bounds.origin());
   m_validDstRegion.createSubtraction(m_validDstRegion, rgnToInvalidate);
@@ -363,6 +384,8 @@ void ExpandCelCanvas::invalidateDestCanvas(const gfx::Region& rgn)
 
 void ExpandCelCanvas::copyValidDestToSourceCanvas(const gfx::Region& rgn)
 {
+  EXP_TRACE("ExpandCelCanvas::copyValidDestToSourceCanvas", rgn.bounds());
+
   gfx::Region rgn2(rgn);
   rgn2.offset(-m_bounds.origin());
   rgn2.createIntersection(rgn2, m_validSrcRegion);
@@ -372,7 +395,7 @@ void ExpandCelCanvas::copyValidDestToSourceCanvas(const gfx::Region& rgn)
       gfx::Clip(rc.x, rc.y, rc.x, rc.y, rc.w, rc.h));
 
   // We cannot compare src vs dst in this case (e.g. on tools like
-  // spray and jumble that updated the source image form the modified
+  // spray and jumble that updated the source image from the modified
   // destination).
   m_canCompareSrcVsDst = false;
 }

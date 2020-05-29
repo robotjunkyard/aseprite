@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -35,7 +35,7 @@
 #include "ui/message.h"
 #include "ui/system.h"
 
-#include "doc/frame_tag.h"
+#include "doc/tag.h"
 
 namespace app {
 
@@ -100,6 +100,7 @@ public:
   void setPlaying(bool state) {
     m_isPlaying = state;
     setupIcons();
+    invalidate();
   }
 
   obs::signal<void()> Popup;
@@ -209,8 +210,7 @@ void PreviewEditorWindow::setPreviewEnabled(bool state)
 
 void PreviewEditorWindow::pressPlayButton()
 {
-  m_playButton->setSelected(
-    !m_playButton->isSelected());
+  m_playButton->setPlaying(!m_playButton->isPlaying());
   onPlayClicked();
 }
 
@@ -397,15 +397,15 @@ void PreviewEditorWindow::updateUsingEditor(Editor* editor)
   }
   else {
     if (miniEditor->isPlaying()) {
-      doc::FrameTag* tag = editor
+      doc::Tag* tag = editor
         ->getCustomizationDelegate()
-        ->getFrameTagProvider()
-        ->getFrameTagByFrame(editor->frame(), true);
+        ->getTagProvider()
+        ->getTagByFrame(editor->frame(), true);
 
-      doc::FrameTag* playingTag = editor
+      doc::Tag* playingTag = editor
         ->getCustomizationDelegate()
-        ->getFrameTagProvider()
-        ->getFrameTagByFrame(m_refFrame, true);
+        ->getTagProvider()
+        ->getTagByFrame(m_refFrame, true);
 
       if (tag == playingTag)
         return;

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2017-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,6 +10,7 @@
 #endif
 
 #include "app/script/luacpp.h"
+#include "fmt/format.h"
 #include "gfx/point.h"
 #include "gfx/rect.h"
 
@@ -26,15 +28,30 @@ gfx::Rect Rectangle_new(lua_State* L, int index)
   }
   // Convert { x, y, width, height } into a Rectangle
   else if (lua_istable(L, index)) {
-    lua_getfield(L, index, "x");
-    lua_getfield(L, index, "y");
-    lua_getfield(L, index, "width");
-    lua_getfield(L, index, "height");
-    rc.x = lua_tointeger(L, -4);
-    rc.y = lua_tointeger(L, -3);
-    rc.w = lua_tointeger(L, -2);
-    rc.h = lua_tointeger(L, -1);
-    lua_pop(L, 4);
+    const int type = lua_getfield(L, index, "x");
+    if (type != LUA_TNONE &&
+        type != LUA_TNIL) {
+      lua_getfield(L, index, "y");
+      lua_getfield(L, index, "width");
+      lua_getfield(L, index, "height");
+      rc.x = lua_tointeger(L, -4);
+      rc.y = lua_tointeger(L, -3);
+      rc.w = lua_tointeger(L, -2);
+      rc.h = lua_tointeger(L, -1);
+      lua_pop(L, 4);
+    }
+    else {
+      lua_pop(L, 1);
+      lua_geti(L, index, 1);
+      lua_geti(L, index, 2);
+      lua_geti(L, index, 3);
+      lua_geti(L, index, 4);
+      rc.x = lua_tointeger(L, -4);
+      rc.y = lua_tointeger(L, -3);
+      rc.w = lua_tointeger(L, -2);
+      rc.h = lua_tointeger(L, -1);
+      lua_pop(L, 4);
+    }
   }
   else {
     rc.x = lua_tointeger(L, index);
@@ -62,6 +79,14 @@ int Rectangle_eq(lua_State* L)
   const auto a = get_obj<gfx::Rect>(L, 1);
   const auto b = get_obj<gfx::Rect>(L, 2);
   lua_pushboolean(L, *a == *b);
+  return 1;
+}
+
+int Rectangle_tostring(lua_State* L)
+{
+  const auto rc = get_obj<gfx::Rect>(L, 1);
+  lua_pushstring(L, fmt::format("Rectangle{{ x={}, y={}, width={}, height={} }}",
+                                rc->x, rc->y, rc->w, rc->h).c_str());
   return 1;
 }
 
@@ -163,6 +188,9 @@ int Rectangle_get_isEmpty(lua_State* L)
 const luaL_Reg Rectangle_methods[] = {
   { "__gc", Rectangle_gc },
   { "__eq", Rectangle_eq },
+  { "__tostring", Rectangle_tostring },
+  { "__band", Rectangle_intersect },
+  { "__bor", Rectangle_union },
   { "contains", Rectangle_contains },
   { "intersects", Rectangle_intersects },
   { "union", Rectangle_union },

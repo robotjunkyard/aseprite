@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -15,7 +15,10 @@
 #include "app/context_access.h"
 #include "app/doc.h"
 #include "app/doc_undo.h"
+#include "app/modules/palettes.h"
 #include "doc/sprite.h"
+#include "ui/manager.h"
+#include "ui/system.h"
 
 #define TX_TRACE(...)
 
@@ -23,19 +26,24 @@ namespace app {
 
 using namespace doc;
 
-Transaction::Transaction(Context* ctx, const std::string& label, Modification modification)
+Transaction::Transaction(
+  Context* ctx,
+  Doc* doc,
+  const std::string& label,
+  Modification modification)
   : m_ctx(ctx)
-  , m_cmds(NULL)
+  , m_doc(doc)
+  , m_undo(nullptr)
+  , m_cmds(nullptr)
+  , m_changes(Changes::kNone)
 {
   TX_TRACE("TX: Start <%s> (%s)\n",
            label.c_str(),
            modification == ModifyDocument ? "modifies document":
                                             "doesn't modify document");
 
-  Doc* doc = m_ctx->activeDocument();
-  if (!doc)
-    throw std::runtime_error("No active document to execute a transaction");
-  m_undo = doc->undoHistory();
+  m_doc->add_observer(this);
+  m_undo = m_doc->undoHistory();
 
   m_cmds = new CmdTransaction(label,
     modification == Modification::ModifyDocument,
@@ -52,7 +60,7 @@ Transaction::~Transaction()
   try {
     // If it isn't committed, we have to rollback all changes.
     if (m_cmds)
-      rollback();
+      rollback(nullptr);
   }
   catch (...) {
     // Just avoid throwing an exception in the dtor (just in case
@@ -60,6 +68,8 @@ Transaction::~Transaction()
 
     // TODO logging error
   }
+
+  m_doc->remove_observer(this);
 }
 
 // Used to set the document range after all the transaction is
@@ -73,15 +83,52 @@ void Transaction::setNewDocRange(const DocRange& range)
 
 void Transaction::commit()
 {
+  // This assert can fail when we run scripts in batch mode
+  //ui::assert_ui_thread();
+
   ASSERT(m_cmds);
   TX_TRACE("TX: Commit <%s>\n", m_cmds->label().c_str());
 
-  m_cmds->commit();
+  m_cmds->updateSpritePositionAfter();
+#ifdef ENABLE_UI
+  const SpritePosition sprPos = m_cmds->spritePositionAfterExecute();
+#endif
+
   m_undo->add(m_cmds);
-  m_cmds = NULL;
+  m_cmds = nullptr;
+
+  // Process changes
+  if (int(m_changes) & int(Changes::kSelection)) {
+    m_doc->resetTransformation();
+    m_doc->generateMaskBoundaries();
+  }
+
+#ifdef ENABLE_UI
+  if (int(m_changes) & int(Changes::kColorChange)) {
+    ASSERT(m_doc);
+    ASSERT(m_doc->sprite());
+
+    Palette* pal = m_doc->sprite()->palette(sprPos.frame());
+    ASSERT(pal);
+    if (pal)
+      set_current_palette(pal, false);
+    else
+      set_current_palette(nullptr, false);
+
+    if (m_ctx->isUIAvailable())
+      ui::Manager::getDefault()->invalidate();
+  }
+#endif
 }
 
-void Transaction::rollback()
+void Transaction::rollbackAndStartAgain()
+{
+  auto newCmds = m_cmds->moveToEmptyCopy();
+  rollback(newCmds);
+  newCmds->execute(m_ctx);
+}
+
+void Transaction::rollback(CmdTransaction* newCmds)
 {
   ASSERT(m_cmds);
   TX_TRACE("TX: Rollback <%s>\n", m_cmds->label().c_str());
@@ -89,7 +136,7 @@ void Transaction::rollback()
   m_cmds->undo();
 
   delete m_cmds;
-  m_cmds = NULL;
+  m_cmds = newCmds;
 }
 
 void Transaction::execute(Cmd* cmd)
@@ -110,6 +157,21 @@ void Transaction::execute(Cmd* cmd)
     delete cmd;
     throw;
   }
+}
+
+void Transaction::onSelectionChanged(DocEvent& ev)
+{
+  m_changes = Changes(int(m_changes) | int(Changes::kSelection));
+}
+
+void Transaction::onColorSpaceChanged(DocEvent& ev)
+{
+  m_changes = Changes(int(m_changes) | int(Changes::kColorChange));
+}
+
+void Transaction::onPaletteChanged(DocEvent& ev)
+{
+  m_changes = Changes(int(m_changes) | int(Changes::kColorChange));
 }
 
 } // namespace app

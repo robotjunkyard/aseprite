@@ -1,5 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2016 David Capello
+// Copyright (C) 2019-2020  Igara Studio S.A.
+// Copyright (C) 2001-2016  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -53,7 +54,7 @@ const ObjectId Object::id() const
   // The first time the ID is request, we store the object in the
   // "objects" hash table.
   if (!m_id) {
-    base::scoped_unlock hold(mutex);
+    base::scoped_lock hold(mutex);
     m_id = ++newId;
     objects.insert(std::make_pair(m_id, const_cast<Object*>(this)));
   }
@@ -62,7 +63,7 @@ const ObjectId Object::id() const
 
 void Object::setId(ObjectId id)
 {
-  base::scoped_unlock hold(mutex);
+  base::scoped_lock hold(mutex);
 
   if (m_id) {
     auto it = objects.find(m_id);
@@ -75,7 +76,21 @@ void Object::setId(ObjectId id)
   m_id = id;
 
   if (m_id) {
+#ifdef _DEBUG
+    if (objects.find(m_id) != objects.end()) {
+      Object* obj = objects.find(m_id)->second;
+      if (obj) {
+        TRACEARGS("ASSERT FAILED: Object with id", m_id,
+                  "of kind", int(obj->type()),
+                  "version", obj->version(), "should not exist");
+      }
+      else {
+        TRACEARGS("ASSERT FAILED: Object with id", m_id,
+                  "registered as nullptr should not exist");
+      }
+    }
     ASSERT(objects.find(m_id) == objects.end());
+#endif
     objects.insert(std::make_pair(m_id, this));
   }
 }
@@ -87,7 +102,7 @@ void Object::setVersion(ObjectVersion version)
 
 Object* get_object(ObjectId id)
 {
-  base::scoped_unlock hold(mutex);
+  base::scoped_lock hold(mutex);
   auto it = objects.find(id);
   if (it != objects.end())
     return it->second;

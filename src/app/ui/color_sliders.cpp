@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -29,6 +29,7 @@
 #include "ui/slider.h"
 #include "ui/theme.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace app {
@@ -62,7 +63,7 @@ namespace {
       auto convertColor = convert_from_current_to_screen_color_space();
 
       gfx::Color color = gfx::ColorNone;
-      int w = MAX(rc.w-1, 1);
+      int w = std::max(rc.w-1, 1);
 
       for (int x=0; x <= w; ++x) {
         switch (m_channel) {
@@ -185,7 +186,7 @@ namespace {
                 else
                   ++value;
 
-                setTextf("%d", MID(minValue(), value, maxValue()));
+                setTextf("%d", base::clamp(value, minValue(), maxValue()));
                 selectAllText();
 
                 onChange();
@@ -370,7 +371,7 @@ void ColorSliders::addSlider(const Channel channel,
 
   item.relSlider->setSizeHint(gfx::Size(128, 0));
   item.absSlider->setSizeHint(gfx::Size(128, 0));
-  item.absSlider->setProperty(SkinSliderPropertyPtr(new SkinSliderProperty(new ColorSliderBgPainter(channel))));
+  item.absSlider->setProperty(std::make_shared<SkinSliderProperty>(new ColorSliderBgPainter(channel)));
   item.absSlider->setDoubleBuffered(true);
   get_skin_property(item.entry)->setLook(MiniLook);
 
@@ -459,7 +460,7 @@ void ColorSliders::onEntryChange(const Channel i)
   Slider* slider = (m_mode == Mode::Absolute ?
                     m_items[i].absSlider:
                     m_items[i].relSlider);
-  value = MID(slider->getMinValue(), value, slider->getMaxValue());
+  value = base::clamp(value, slider->getMinValue(), slider->getMaxValue());
   slider->setValue(value);
 
   onControlChange(i);
@@ -498,7 +499,8 @@ void ColorSliders::updateSlidersBgColor()
 
 void ColorSliders::updateSliderBgColor(Slider* slider, const app::Color& color)
 {
-  SkinSliderPropertyPtr sliderProperty(slider->getProperty(SkinSliderProperty::Name));
+  auto sliderProperty = std::static_pointer_cast<SkinSliderProperty>(
+    slider->getProperty(SkinSliderProperty::Name));
 
   static_cast<ColorSliderBgPainter*>(sliderProperty->getBgPainter())->setColor(color);
 

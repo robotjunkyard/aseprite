@@ -1,4 +1,5 @@
 # Aseprite
+# Copyright (C) 2018-2020  Igara Studio S.A.
 # Copyright (C) 2001-2018  David Capello
 
 cmake_minimum_required(VERSION 3.4)
@@ -23,12 +24,8 @@ if(NOT CMAKE_BUILD_TYPE)
       FORCE)
 endif()
 
-# Restrict configuration types to the selected build type.
-# Note: This needs to be done before the project command
-set(CMAKE_CONFIGURATION_TYPES "${CMAKE_BUILD_TYPE}" CACHE INTERNAL "internal")
-
-set(CMAKE_USER_MAKE_RULES_OVERRIDE ${CMAKE_CURRENT_SOURCE_DIR}/cmake/c_flag_overrides.cmake)
-set(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX ${CMAKE_CURRENT_SOURCE_DIR}/cmake/cxx_flag_overrides.cmake)
+set(CMAKE_USER_MAKE_RULES_OVERRIDE ${CMAKE_CURRENT_SOURCE_DIR}/laf/cmake/c_flag_overrides.cmake)
+set(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX ${CMAKE_CURRENT_SOURCE_DIR}/laf/cmake/cxx_flag_overrides.cmake)
 
 # Aseprite project
 project(aseprite C CXX)
@@ -80,6 +77,7 @@ option(ENABLE_STEAM        "Compile with Steam library" off)
 option(ENABLE_DEVMODE      "Compile vesion for developers" off)
 option(ENABLE_UI           "Compile UI (turn off to compile CLI-only version)" on)
 option(FULLSCREEN_PLATFORM "Enable fullscreen by default" off)
+option(ENABLE_CLANG_TIDY   "Enable static analysis" off)
 set(CUSTOM_WEBSITE_URL "" CACHE STRING "Enable custom local webserver to check updates")
 
 if(ENABLE_NEWS OR ENABLE_UPDATER)
@@ -221,7 +219,7 @@ add_definitions(-DPNG_NO_MMX_CODE) # Do not use MMX optimizations in PNG code
 
 # libwebp
 if(WITH_WEBP_SUPPORT)
-  set(WEBP_LIBRARIES webp webpdemux webpmux)
+  set(WEBP_LIBRARIES webp webpdemux libwebpmux)
   set(WEBP_INCLUDE_DIR ${LIBWEBP_DIR}/src)
   include_directories(${WEBP_INCLUDE_DIR})
 endif()
@@ -326,3 +324,42 @@ set(UNDO_TESTS     ${ENABLE_TESTS} CACHE BOOL "Enable undo tests")
 
 add_subdirectory(laf)
 add_subdirectory(src)
+
+######################################################################
+# Using clang-tidy with cmake.
+# Based on http://mariobadr.com/using-clang-tidy-with-cmake-36.html
+
+if(ENABLE_CLANG_TIDY)
+  find_program(CLANG_TIDY_EXE
+    NAMES "clang-tidy"
+    DOC "Path to clang-tidy executable")
+  if(NOT CLANG_TIDY_EXE)
+    message(STATUS "clang-tidy not found.")
+  else()
+    message(STATUS "clang-tidy found: ${CLANG_TIDY_EXE}")
+    set(DO_CLANG_TIDY "${CLANG_TIDY_EXE}")
+  endif()
+
+  if(CLANG_TIDY_EXE)
+    set_target_properties(app-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(aseprite PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(cfg-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(clip PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(dio-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(doc-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(filters-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(fixmath-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(flic-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(gen PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(laf-base PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(laf-ft PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(laf-gfx PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(laf-os PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(net-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(obs PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(render-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(ui-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(undo PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+    set_target_properties(updater-lib PROPERTIES CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+  endif()
+endif()

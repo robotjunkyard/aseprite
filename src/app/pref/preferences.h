@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,9 +11,9 @@
 
 #include "app/color.h"
 #include "app/commands/filters/cels_target.h"
-#include "app/doc_exporter.h"
 #include "app/docs_observer.h"
 #include "app/pref/option.h"
+#include "app/sprite_sheet_data_format.h"
 #include "app/sprite_sheet_type.h"
 #include "app/tools/freehand_algorithm.h"
 #include "app/tools/ink_type.h"
@@ -25,6 +25,8 @@
 #include "doc/color_mode.h"
 #include "doc/frame.h"
 #include "doc/layer_list.h"
+#include "doc/sprite.h"
+#include "filters/hue_saturation_filter.h"
 #include "filters/tiled_mode.h"
 #include "gfx/rect.h"
 #include "render/onionskin_position.h"
@@ -54,7 +56,6 @@ namespace app {
     Preferences();
     ~Preferences();
 
-    void load();
     void save();
 
     // Returns true if the given option was set by the user or false
@@ -64,15 +65,22 @@ namespace app {
     ToolPreferences& tool(tools::Tool* tool);
     DocumentPreferences& document(const Doc* doc);
 
+    // Used to reset the tool preferences in scripting mode when the
+    // UI is not available (so scripts have a common default
+    // preferences and a reproducible behavior for automation).
+    void resetToolPreferences(tools::Tool* tool);
+
     // Remove one document explicitly (this can be used if the
     // document used in Preferences::document() function wasn't member
     // of UIContext.
     void removeDocument(Doc* doc);
 
   protected:
+    // DocsObserver impl
     void onRemoveDocument(Doc* doc) override;
 
   private:
+    void load();
     std::string docConfigFileName(const Doc* doc);
 
     void serializeDocPref(const Doc* doc, app::DocumentPreferences* docPref, bool save);

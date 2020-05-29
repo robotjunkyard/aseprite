@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -19,6 +20,7 @@ namespace app {
   namespace tools {
     class Ink;
     class Pointer;
+    class Command;
   }
 
   class DrawingState;
@@ -26,7 +28,7 @@ namespace app {
 
   class StandbyState : public StateWithWheelBehavior {
   public:
-    enum class DrawingType { Regular, LineFreehand };
+    enum class DrawingType { Regular, LineFreehand, SelectTiles };
 
     StandbyState();
     virtual ~StandbyState();
@@ -48,12 +50,13 @@ namespace app {
     virtual Transformation getTransformation(Editor* editor);
 
     void startSelectionTransformation(Editor* editor, const gfx::Point& move, double angle);
-    
+
     void startFlipTransformation(Editor* editor, doc::algorithm::FlipType flipType);
-    
+
   protected:
     void callEyedropper(Editor* editor, const ui::MouseMessage* msg);
     bool checkStartDrawingStraightLine(Editor* editor, const ui::MouseMessage* msg);
+    virtual bool canCheckStartDrawingStraightLine() { return true; }
 
     class Decorator : public EditorDecorator {
     public:
@@ -90,6 +93,7 @@ namespace app {
     void onPivotChange(Editor* editor);
     gfx::Rect resizeCelBounds(Editor* editor) const;
     bool overSelectionEdges(Editor* editor, const gfx::Point& mouseScreenPos) const;
+    void selectTile(Editor* editor);
 
     Decorator* m_decorator;
     obs::scoped_connection m_pivotVisConn;

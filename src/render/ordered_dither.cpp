@@ -1,4 +1,5 @@
 // Aseprite Render Library
+// Copyright (c) 2019-2020  Igara Studio S.A.
 // Copyright (c) 2017 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -10,7 +11,9 @@
 
 #include "render/ordered_dither.h"
 
-#include "base/base.h"
+#include "base/clamp.h"
+#include "render/dithering.h"
+#include "render/dithering_matrix.h"
 
 #include <algorithm>
 #include <limits>
@@ -80,10 +83,10 @@ doc::color_t OrderedDither::ditherRgbPixelToIndex(
   int g2 = g - (g1-g);
   int b2 = b - (b1-b);
   int a2 = a - (a1-a);
-  r2 = MID(0, r2, 255);
-  g2 = MID(0, g2, 255);
-  b2 = MID(0, b2, 255);
-  a2 = MID(0, a2, 255);
+  r2 = base::clamp(r2, 0, 255);
+  g2 = base::clamp(g2, 0, 255);
+  b2 = base::clamp(b2, 0, 255);
+  a2 = base::clamp(a2, 0, 255);
   doc::color_t nearest2idx =
     (rgbmap ? rgbmap->mapColor(r2, g2, b2, a2):
               palette->findBestfit(r2, g2, b2, a2, m_transparentIndex));
@@ -198,7 +201,7 @@ doc::color_t OrderedDither2::ditherRgbPixelToIndex(
     if (mix) {
       if (div)
         mix /= div;
-      mix = MID(0, mix, maxMixValue);
+      mix = base::clamp(mix, 0, maxMixValue);
     }
 
     const int rM = r0 + (r1-r0) * mix / maxMixValue;
@@ -227,38 +230,79 @@ doc::color_t OrderedDither2::ditherRgbPixelToIndex(
 
 void dither_rgb_image_to_indexed(
   DitheringAlgorithmBase& algorithm,
-  const DitheringMatrix& matrix,
+  const Dithering& dithering,
   const doc::Image* srcImage,
   doc::Image* dstImage,
-  int u, int v,
   const doc::RgbMap* rgbmap,
   const doc::Palette* palette,
   TaskDelegate* delegate)
 {
-  const doc::LockImageBits<doc::RgbTraits> srcBits(srcImage);
-  doc::LockImageBits<doc::IndexedTraits> dstBits(dstImage);
-  auto srcIt = srcBits.begin();
-  auto dstIt = dstBits.begin();
-  int w = srcImage->width();
-  int h = srcImage->height();
+  const int w = srcImage->width();
+  const int h = srcImage->height();
 
-  for (int y=0; y<h; ++y) {
-    for (int x=0; x<w; ++x, ++srcIt, ++dstIt) {
-      ASSERT(srcIt != srcBits.end());
-      ASSERT(dstIt != dstBits.end());
-      *dstIt = algorithm.ditherRgbPixelToIndex(matrix, *srcIt, x+u, y+v, rgbmap, palette);
+  algorithm.start(srcImage, dstImage, dithering.factor());
+
+  if (algorithm.dimensions() == 1) {
+    const doc::LockImageBits<doc::RgbTraits> srcBits(srcImage);
+    doc::LockImageBits<doc::IndexedTraits> dstBits(dstImage);
+    auto srcIt = srcBits.begin();
+    auto dstIt = dstBits.begin();
+
+    for (int y=0; y<h; ++y) {
+      for (int x=0; x<w; ++x, ++srcIt, ++dstIt) {
+        ASSERT(srcIt != srcBits.end());
+        ASSERT(dstIt != dstBits.end());
+        *dstIt = algorithm.ditherRgbPixelToIndex(
+          dithering.matrix(), *srcIt, x, y, rgbmap, palette);
+
+        if (delegate) {
+          if (!delegate->continueTask())
+            return;
+        }
+      }
 
       if (delegate) {
-        if (!delegate->continueTask())
-          return;
+        delegate->notifyTaskProgress(
+          double(y+1) / double(h));
       }
     }
+  }
+  else {
+    auto dstIt = doc::get_pixel_address_fast<doc::IndexedTraits>(dstImage, 0, 0);
+    const bool zigZag = algorithm.zigZag();
 
-    if (delegate) {
-      delegate->notifyTaskProgress(
-        double(y+1) / double(h));
+    for (int y=0; y<h; ++y) {
+      if (zigZag && (y & 1)) { // Odd row: go from right-to-left
+        dstIt += w-1;
+        for (int x=w-1; x>=0; --x, --dstIt) {
+          ASSERT(dstIt == doc::get_pixel_address_fast<doc::IndexedTraits>(dstImage, x, y));
+          *dstIt = algorithm.ditherRgbToIndex2D(x, y, rgbmap, palette);
+          if (delegate) {
+            if (!delegate->continueTask())
+              return;
+          }
+        }
+        dstIt += w+1;
+      }
+      else {                    // Even row: go fromo left-to-right
+        for (int x=0; x<w; ++x, ++dstIt) {
+          ASSERT(dstIt == doc::get_pixel_address_fast<doc::IndexedTraits>(dstImage, x, y));
+          *dstIt = algorithm.ditherRgbToIndex2D(x, y, rgbmap, palette);
+
+          if (delegate) {
+            if (!delegate->continueTask())
+              return;
+          }
+        }
+      }
+      if (delegate) {
+        delegate->notifyTaskProgress(
+          double(y+1) / double(h));
+      }
     }
   }
+
+  algorithm.finish();
 }
 
 } // namespace render

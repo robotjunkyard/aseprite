@@ -1,5 +1,6 @@
 // Aseprite Render Library
-// Copyright (c) 2001-2018 David Capello
+// Copyright (c) 2019-2020  Igara Studio S.A.
+// Copyright (c) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -17,8 +18,8 @@
 #include "doc/remap.h"
 #include "doc/rgbmap.h"
 #include "doc/sprite.h"
-#include "gfx/hsv.h"
-#include "gfx/rgb.h"
+#include "render/dithering.h"
+#include "render/error_diffusion.h"
 #include "render/ordered_dither.h"
 #include "render/render.h"
 #include "render/task_delegate.h"
@@ -40,7 +41,8 @@ Palette* create_palette_from_sprite(
   const frame_t toFrame,
   const bool withAlpha,
   Palette* palette,
-  TaskDelegate* delegate)
+  TaskDelegate* delegate,
+  const bool newBlend)
 {
   PaletteOptimizer optimizer;
 
@@ -53,6 +55,7 @@ Palette* create_palette_from_sprite(
 
   // Feed the optimizer with all rendered frames
   render::Render render;
+  render.setNewBlend(newBlend);
   for (frame_t frame=fromFrame; frame<=toFrame; ++frame) {
     render.renderSprite(flat_image.get(), sprite, frame);
     optimizer.feedWithImage(flat_image.get(), withAlpha);
@@ -80,12 +83,12 @@ Image* convert_pixel_format(
   const Image* image,
   Image* new_image,
   PixelFormat pixelFormat,
-  DitheringAlgorithm ditheringAlgorithm,
-  const DitheringMatrix& ditheringMatrix,
+  const Dithering& dithering,
   const RgbMap* rgbmap,
   const Palette* palette,
   bool is_background,
   color_t new_mask_color,
+  rgba_to_graya_func toGray,
   TaskDelegate* delegate)
 {
   if (!new_image)
@@ -95,20 +98,32 @@ Image* convert_pixel_format(
   // RGB -> Indexed with ordered dithering
   if (image->pixelFormat() == IMAGE_RGB &&
       pixelFormat == IMAGE_INDEXED &&
-      ditheringAlgorithm != DitheringAlgorithm::None) {
+      dithering.algorithm() != DitheringAlgorithm::None) {
     std::unique_ptr<DitheringAlgorithmBase> dither;
-    switch (ditheringAlgorithm) {
+    switch (dithering.algorithm()) {
       case DitheringAlgorithm::Ordered:
         dither.reset(new OrderedDither2(is_background ? -1: new_mask_color));
         break;
       case DitheringAlgorithm::Old:
         dither.reset(new OrderedDither(is_background ? -1: new_mask_color));
         break;
+      case DitheringAlgorithm::ErrorDiffusion:
+        dither.reset(new ErrorDiffusionDither(is_background ? -1: new_mask_color));
+        break;
     }
     if (dither)
       dither_rgb_image_to_indexed(
-        *dither, ditheringMatrix, image, new_image, 0, 0, rgbmap, palette, delegate);
+        *dither, dithering,
+        image, new_image, rgbmap, palette, delegate);
     return new_image;
+  }
+
+  // RGB/Indexed -> Gray
+  if ((image->pixelFormat() == IMAGE_RGB ||
+       image->pixelFormat() == IMAGE_INDEXED) &&
+      new_image->pixelFormat() == IMAGE_GRAYSCALE) {
+    if (!toGray)
+      toGray = &rgba_to_graya_using_luma;
   }
 
   color_t c;
@@ -133,17 +148,12 @@ Image* convert_pixel_format(
           LockImageBits<GrayscaleTraits>::iterator dst_it = dstBits.begin();
 #ifdef _DEBUG
           LockImageBits<GrayscaleTraits>::iterator dst_end = dstBits.end();
+          ASSERT(toGray);
 #endif
 
           for (; src_it != src_end; ++src_it, ++dst_it) {
             ASSERT(dst_it != dst_end);
-            c = *src_it;
-
-            g = 255 * Hsv(Rgb(rgba_getr(c),
-                              rgba_getg(c),
-                              rgba_getb(c))).valueInt() / 100;
-
-            *dst_it = graya(g, rgba_geta(c));
+            *dst_it = (*toGray)(*src_it);
           }
           ASSERT(dst_it == dst_end);
           break;
@@ -272,6 +282,7 @@ Image* convert_pixel_format(
           LockImageBits<GrayscaleTraits>::iterator dst_it = dstBits.begin();
 #ifdef _DEBUG
           LockImageBits<GrayscaleTraits>::iterator dst_end = dstBits.end();
+          ASSERT(toGray);
 #endif
 
           for (; src_it != src_end; ++src_it, ++dst_it) {
@@ -282,13 +293,7 @@ Image* convert_pixel_format(
               *dst_it = graya(0, 0);
             else {
               c = palette->getEntry(c);
-              r = rgba_getr(c);
-              g = rgba_getg(c);
-              b = rgba_getb(c);
-              a = rgba_geta(c);
-
-              g = 255 * Hsv(Rgb(r, g, b)).valueInt() / 100;
-              *dst_it = graya(g, a);
+              *dst_it = (*toGray)(c);
             }
           }
           ASSERT(dst_it == dst_end);
@@ -341,6 +346,9 @@ Image* convert_pixel_format(
 void PaletteOptimizer::feedWithImage(Image* image, bool withAlpha)
 {
   uint32_t color;
+
+  if (withAlpha)
+    m_withAlpha = true;
 
   ASSERT(image);
   switch (image->pixelFormat()) {
@@ -423,10 +431,11 @@ void PaletteOptimizer::calculate(Palette* palette, int maskIndex)
     palette->applyRemap(remap);
 
     if (maskIndex < palette->size())
-      palette->setEntry(maskIndex, rgba(0, 0, 0, 255));
+      palette->setEntry(maskIndex, rgba(0, 0, 0, (m_withAlpha ? 0: 255)));
   }
-  else
-    palette->resize(MAX(1, usedColors));
+  else {
+    palette->resize(std::max(1, usedColors));
+  }
 }
 
 } // namespace render

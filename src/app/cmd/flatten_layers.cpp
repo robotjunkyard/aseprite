@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019 Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -31,9 +32,11 @@ namespace app {
 namespace cmd {
 
 FlattenLayers::FlattenLayers(doc::Sprite* sprite,
-                             const doc::SelectedLayers& layers0)
+                             const doc::SelectedLayers& layers0,
+                             const bool newBlend)
   : WithSprite(sprite)
 {
+  m_newBlendMethod = newBlend;
   doc::SelectedLayers layers(layers0);
   layers.removeChildrenIfParentIsSelected();
 
@@ -58,10 +61,12 @@ void FlattenLayers::onExecute()
       backgroundIsSel = true;
   }
 
+  LayerList list = layers.toLayerList();
+  if (list.empty())
+    return;                     // Do nothing
+
   // Create a temporary image.
-  ImageRef image(Image::create(sprite->pixelFormat(),
-      sprite->width(),
-      sprite->height()));
+  ImageRef image(Image::create(sprite->spec()));
 
   LayerImage* flatLayer;  // The layer onto which everything will be flattened.
   color_t     bgcolor;    // The background color to use for flatLayer.
@@ -79,7 +84,6 @@ void FlattenLayers::onExecute()
     executeAndAdd(new cmd::SetLayerName(flatLayer, "Flattened"));
     bgcolor = sprite->transparentColor();
 
-    LayerList list = layers.toLayerList();
     if (list.front())
       executeAndAdd(new cmd::MoveLayer(flatLayer,
                                        list.front()->parent(),
@@ -87,6 +91,7 @@ void FlattenLayers::onExecute()
   }
 
   render::Render render;
+  render.setNewBlend(m_newBlendMethod);
   render.setBgType(render::BgType::NONE);
 
   {

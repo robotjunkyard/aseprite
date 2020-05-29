@@ -1,6 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2018 Igara Studio S.A.
-// Copyright (c) 2001-2018 David Capello
+// Copyright (C) 2018-2020  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -11,18 +11,18 @@
 
 #include "doc/sprite.h"
 
-#include "base/base.h"
+#include "base/clamp.h"
 #include "base/memory.h"
 #include "base/remove_from_container.h"
 #include "doc/cel.h"
 #include "doc/cels_range.h"
-#include "doc/frame_tag.h"
 #include "doc/image_impl.h"
 #include "doc/layer.h"
 #include "doc/palette.h"
 #include "doc/primitives.h"
 #include "doc/remap.h"
 #include "doc/rgbmap.h"
+#include "doc/tag.h"
 
 #include <algorithm>
 #include <cstring>
@@ -34,6 +34,20 @@ namespace doc {
 //////////////////////////////////////////////////////////////////////
 // Constructors/Destructor
 
+static gfx::Rect g_defaultGridBounds(0, 0, 16, 16);
+
+// static
+gfx::Rect Sprite::DefaultGridBounds()
+{
+  return g_defaultGridBounds;
+}
+
+// static
+void Sprite::SetDefaultGridBounds(const gfx::Rect& defGridBounds)
+{
+  g_defaultGridBounds = defGridBounds;
+}
+
 Sprite::Sprite(const ImageSpec& spec,
                int ncolors)
   : Object(ObjectType::Sprite)
@@ -43,8 +57,9 @@ Sprite::Sprite(const ImageSpec& spec,
   , m_frames(1)
   , m_frlens(1, 100)            // First frame with 100 msecs of duration
   , m_root(new LayerGroup(this))
+  , m_gridBounds(Sprite::DefaultGridBounds())
   , m_rgbMap(nullptr)           // Initial RGB map
-  , m_frameTags(this)
+  , m_tags(this)
   , m_slices(this)
 {
   // Generate palette
@@ -62,7 +77,7 @@ Sprite::Sprite(const ImageSpec& spec,
     case ColorMode::BITMAP:
       for (int c=0; c<ncolors; c++) {
         int g = 255 * c / (ncolors-1);
-        g = MID(0, g, 255);
+        g = base::clamp(g, 0, 255);
         pal.setEntry(c, rgba(g, g, g, 255));
       }
       break;
@@ -89,15 +104,16 @@ Sprite::~Sprite()
 }
 
 // static
-Sprite* Sprite::createBasicSprite(const ImageSpec& spec,
-                                  const int ncolors)
+Sprite* Sprite::MakeStdSprite(const ImageSpec& spec,
+                              const int ncolors,
+                              const ImageBufferPtr& imageBuf)
 {
   // Create the sprite.
   std::unique_ptr<Sprite> sprite(new Sprite(spec, ncolors));
   sprite->setTotalFrames(frame_t(1));
 
   // Create the main image.
-  ImageRef image(Image::create(spec));
+  ImageRef image(Image::create(spec, imageBuf));
   clear_image(image.get(), 0);
 
   // Create the first transparent layer.
@@ -378,7 +394,7 @@ void Sprite::removeFrame(frame_t frame)
 
 void Sprite::setTotalFrames(frame_t frames)
 {
-  frames = MAX(frame_t(1), frames);
+  frames = std::max(frame_t(1), frames);
   m_frlens.resize(frames);
 
   if (frames > m_frames) {
@@ -408,19 +424,19 @@ int Sprite::totalAnimationDuration() const
 void Sprite::setFrameDuration(frame_t frame, int msecs)
 {
   if (frame >= 0 && frame < m_frames)
-    m_frlens[frame] = MID(1, msecs, 65535);
+    m_frlens[frame] = base::clamp(msecs, 1, 65535);
 }
 
 void Sprite::setFrameRangeDuration(frame_t from, frame_t to, int msecs)
 {
   std::fill(
     m_frlens.begin()+(std::size_t)from,
-    m_frlens.begin()+(std::size_t)to+1, MID(1, msecs, 65535));
+    m_frlens.begin()+(std::size_t)to+1, base::clamp(msecs, 1, 65535));
 }
 
 void Sprite::setDurationForAllFrames(int msecs)
 {
-  std::fill(m_frlens.begin(), m_frlens.end(), MID(1, msecs, 65535));
+  std::fill(m_frlens.begin(), m_frlens.end(), base::clamp(msecs, 1, 65535));
 }
 
 //////////////////////////////////////////////////////////////////////

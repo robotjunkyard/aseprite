@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -17,6 +18,7 @@
 #include "app/ui/color_bar.h"
 #include "app/ui/skin/skin_theme.h"
 #include "base/bind.h"
+#include "base/clamp.h"
 #include "doc/color_mode.h"
 #include "doc/palette.h"
 #include "doc/palette_picks.h"
@@ -26,6 +28,8 @@
 #include "ui/paint_event.h"
 #include "ui/size_hint_event.h"
 #include "ui/system.h"
+#include <algorithm>
+
 
 namespace app {
 
@@ -33,12 +37,19 @@ ColorShades::ColorShades(const Shade& colors, ClickType click)
   : Widget(ui::kGenericWidget)
   , m_click(click)
   , m_shade(colors)
+  , m_minColors(1)
   , m_hotIndex(-1)
   , m_dragIndex(-1)
   , m_boxSize(12)
 {
-  setText("Select colors in the palette");
+  setText("No colors");
   initTheme();
+}
+
+void ColorShades::setMinColors(int minColors)
+{
+  m_minColors = minColors;
+  invalidate();
 }
 
 void ColorShades::reverseShadeColors()
@@ -49,57 +60,34 @@ void ColorShades::reverseShadeColors()
 
 doc::Remap* ColorShades::createShadeRemap(bool left)
 {
-  std::unique_ptr<doc::Remap> remap;
-  Shade colors = getShade();
-
   // We need two or more colors to create a shading remap. In
   // other case, the ShadingInkProcessing will use the full
   // color palette.
-  if (colors.size() > 1) {
-    remap.reset(new doc::Remap(get_current_palette()->size()));
+  Shade colors = getShade();
+  if (colors.size() <= 1)
+    return nullptr;
 
-    for (int i=0; i<remap->size(); ++i)
-      remap->map(i, i);
+  std::unique_ptr<doc::Remap> remap(
+    new doc::Remap(get_current_palette()->size()));
 
-    if (left) {
-      for (int i=1; i<int(colors.size()); ++i)
-        remap->map(colors[i].getIndex(), colors[i-1].getIndex());
-    }
-    else {
-      for (int i=0; i<int(colors.size())-1; ++i)
-        remap->map(colors[i].getIndex(), colors[i+1].getIndex());
+  for (int i=0; i<remap->size(); ++i)
+    remap->map(i, i);
+
+  if (left) {
+    for (int i=1; i<int(colors.size()); ++i) {
+      int j = colors[i].getIndex();
+      if (j >= 0 && j < remap->size())
+        remap->map(j, colors[i-1].getIndex());
     }
   }
-
+  else {
+    for (int i=0; i<int(colors.size())-1; ++i) {
+      int j = colors[i].getIndex();
+      if (j >= 0 && j < remap->size())
+        remap->map(j, colors[i+1].getIndex());
+    }
+  }
   return remap.release();
-}
-
-int ColorShades::size() const
-{
-  int colors = 0;
-  for (const auto& color : m_shade) {
-    if ((color.getIndex() >= 0 &&
-         color.getIndex() < get_current_palette()->size()) ||
-        (m_click == ClickWholeShade)) {
-      ++colors;
-    }
-  }
-  return colors;
-}
-
-Shade ColorShades::getShade() const
-{
-  Shade colors;
-  for (const auto& color : m_shade) {
-    if ((color.getIndex() >= 0 &&
-         color.getIndex() < get_current_palette()->size()) ||
-        (m_click == ClickWholeShade)) {
-      colors.push_back(color);
-    }
-    else if (m_click == ClickEntries)
-      colors.push_back(color);
-  }
-  return colors;
 }
 
 void ColorShades::setShade(const Shade& shade)
@@ -107,18 +95,6 @@ void ColorShades::setShade(const Shade& shade)
   m_shade = shade;
   invalidate();
   parent()->parent()->layout();
-}
-
-void ColorShades::updateShadeFromColorBarPicks()
-{
-  auto colorBar = ColorBar::instance();
-  if (!colorBar)
-    return;
-
-  doc::PalettePicks picks;
-  colorBar->getPaletteView()->getSelectedEntries(picks);
-  if (picks.picks() >= 2)
-    onChangeColorBarSelection();
 }
 
 void ColorShades::onInitTheme(ui::InitThemeEvent& ev)
@@ -141,14 +117,6 @@ void ColorShades::onInitTheme(ui::InitThemeEvent& ev)
 bool ColorShades::onProcessMessage(ui::Message* msg)
 {
   switch (msg->type()) {
-
-    case ui::kOpenMessage:
-      if (m_click == DragAndDropEntries) {
-        // TODO This connection should be in the ContextBar
-        m_conn = ColorBar::instance()->ChangeSelection.connect(
-          base::Bind<void>(&ColorShades::onChangeColorBarSelection, this));
-      }
-      break;
 
     case ui::kSetCursorMessage:
       if (hasCapture()) {
@@ -175,11 +143,14 @@ bool ColorShades::onProcessMessage(ui::Message* msg)
       if (m_hotIndex >= 0 &&
           m_hotIndex < int(m_shade.size())) {
         switch (m_click) {
-          case ClickEntries:
-            Click();
+          case ClickEntries: {
+            ClickEvent ev(static_cast<ui::MouseMessage*>(msg)->button());
+            Click(ev);
+
             m_hotIndex = -1;
             invalidate();
             break;
+          }
           case DragAndDropEntries:
             m_dragIndex = m_hotIndex;
             m_dropBefore = false;
@@ -192,7 +163,10 @@ bool ColorShades::onProcessMessage(ui::Message* msg)
     case ui::kMouseUpMessage: {
       if (m_click == ClickWholeShade) {
         setSelected(true);
-        Click();
+
+        ClickEvent ev(static_cast<ui::MouseMessage*>(msg)->button());
+        Click(ev);
+
         closeWindow();
       }
 
@@ -226,9 +200,10 @@ bool ColorShades::onProcessMessage(ui::Message* msg)
       bounds.shrink(3*ui::guiscale());
 
       if (bounds.contains(mousePos)) {
-        int count = size();
-        hot = (mousePos.x - bounds.x) / (m_boxSize*ui::guiscale());
-        hot = MID(0, hot, count-1);
+        int count = std::max(1, size());
+        int boxWidth = std::max(1, bounds.w / count);
+        hot = (mousePos.x - bounds.x) / boxWidth;
+        hot = base::clamp(hot, 0, count-1);
       }
 
       if (m_hotIndex != hot) {
@@ -270,20 +245,19 @@ void ColorShades::onPaint(ui::PaintEvent& ev)
 
   bounds.shrink(3*ui::guiscale());
 
-  gfx::Rect box(bounds.x, bounds.y, m_boxSize*ui::guiscale(), bounds.h);
-
   Shade colors = getShade();
-  if (colors.size() >= 2) {
+  if (colors.size() >= m_minColors) {
+    gfx::Rect box(bounds.x, bounds.y,
+                  bounds.w / std::max(1, int(colors.size())),
+                  bounds.h);
     gfx::Rect hotBounds;
 
     int j = 0;
     for (int i=0; box.x<bounds.x2(); ++i, box.x += box.w) {
       // Make the last box a little bigger to just use all
       // available size
-      if (i == int(colors.size())-1) {
-        if (bounds.x+bounds.w-box.x <= m_boxSize+m_boxSize/2)
-          box.w = bounds.x+bounds.w-box.x;
-      }
+      if (i == int(colors.size())-1)
+        box.w = bounds.x2()-box.x;
 
       app::Color color;
 
@@ -322,26 +296,6 @@ void ColorShades::onPaint(ui::PaintEvent& ev)
     g->drawAlignedUIText(text(), theme->colors.face(), gfx::ColorNone, bounds,
                          ui::CENTER | ui::MIDDLE);
   }
-}
-
-void ColorShades::onChangeColorBarSelection()
-{
-  if (!isVisible())
-    return;
-
-  doc::PalettePicks picks;
-  ColorBar::instance()->getPaletteView()->getSelectedEntries(picks);
-
-  m_shade.resize(picks.picks());
-
-  int i = 0, j = 0;
-  for (bool pick : picks) {
-    if (pick)
-      m_shade[j++] = app::Color::fromIndex(i);
-    ++i;
-  }
-
-  parent()->parent()->layout();
 }
 
 } // namespace app

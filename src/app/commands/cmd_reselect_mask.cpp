@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -34,8 +35,12 @@ ReselectMaskCommand::ReselectMaskCommand()
 
 bool ReselectMaskCommand::onEnabled(Context* context)
 {
-  ContextWriter writer(context);
-  Doc* document(writer.document());
+  if (!context->checkFlags(ContextFlags::ActiveDocumentIsWritable |
+                           ContextFlags::HasActiveSprite))
+    return false;
+
+  const ContextReader reader(context);
+  const Doc* document(reader.document());
   return
      document &&                      // The document does exist
     !document->isMaskVisible() &&     // The mask is hidden
@@ -53,7 +58,6 @@ void ReselectMaskCommand::onExecute(Context* context)
     tx.commit();
   }
 
-  document->generateMaskBoundaries();
   update_screen_for_document(document);
 }
 

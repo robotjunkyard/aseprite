@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2019 Igara Studio S.A.
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -18,6 +18,7 @@
 #include "app/commands/cmd_rotate.h"
 #include "app/commands/command.h"
 #include "app/commands/commands.h"
+#include "app/commands/move_thing.h"
 #include "app/console.h"
 #include "app/modules/gui.h"
 #include "app/pref/preferences.h"
@@ -40,6 +41,7 @@
 #include "doc/algorithm/flip_image.h"
 #include "doc/mask.h"
 #include "doc/sprite.h"
+#include "fmt/format.h"
 #include "gfx/rect.h"
 #include "ui/manager.h"
 #include "ui/message.h"
@@ -57,6 +59,7 @@ MovingPixelsState::MovingPixelsState(Editor* editor, MouseMessage* msg, PixelsMo
   , m_editor(editor)
   , m_observingEditor(false)
   , m_discarded(false)
+  , m_renderTimer(50)
 {
   // MovingPixelsState needs a selection tool to avoid problems
   // sharing the extra cel between the drawing cursor preview and the
@@ -78,6 +81,8 @@ MovingPixelsState::MovingPixelsState(Editor* editor, MouseMessage* msg, PixelsMo
       editor->layer()->isBackground());
   }
   onTransparentColorChange();
+
+  m_renderTimer.Tick.connect([this]{ onRenderTimer(); });
 
   // Hook BeforeCommandExecution signal so we know if the user wants
   // to execute other command, so we can drop pixels.
@@ -113,6 +118,7 @@ MovingPixelsState::~MovingPixelsState()
 
   removePixelsMovement();
   removeAsEditorObserver();
+  m_renderTimer.stop();
 
   m_editor->manager()->removeMessageFilter(kKeyDownMessage, m_editor);
   m_editor->manager()->removeMessageFilter(kKeyUpMessage, m_editor);
@@ -128,16 +134,25 @@ void MovingPixelsState::translate(const gfx::Point& delta)
   m_pixelsMovement->catchImageAgain(gfx::Point(0, 0), MovePixelsHandle);
   m_pixelsMovement->moveImage(delta, PixelsMovement::NormalMovement);
   m_pixelsMovement->dropImageTemporarily();
+  m_editor->updateStatusBar();
 }
 
 void MovingPixelsState::rotate(double angle)
 {
   m_pixelsMovement->rotate(angle);
+  m_editor->updateStatusBar();
 }
 
 void MovingPixelsState::flip(doc::algorithm::FlipType flipType)
 {
   m_pixelsMovement->flipImage(flipType);
+  m_editor->updateStatusBar();
+}
+
+void MovingPixelsState::shift(int dx, int dy)
+{
+  m_pixelsMovement->shift(dx, dy);
+  m_editor->updateStatusBar();
 }
 
 void MovingPixelsState::onEnterState(Editor* editor)
@@ -147,12 +162,24 @@ void MovingPixelsState::onEnterState(Editor* editor)
   update_screen_for_document(editor->document());
 }
 
+void MovingPixelsState::onEditorGotFocus(Editor* editor)
+{
+  ContextBar* contextBar = App::instance()->contextBar();
+  // Make the DropPixelsField widget visible again in the ContextBar
+  // when we are back to an editor in MovingPixelsState. Without this
+  // we would see the SelectionModeField instead which doesn't make
+  // sense on MovingPixelsState).
+  contextBar->updateForMovingPixels();
+}
+
 EditorState::LeaveAction MovingPixelsState::onLeaveState(Editor* editor, EditorState* newState)
 {
   TRACE("MOVPIXS: onLeaveState\n");
 
   ASSERT(m_pixelsMovement);
   ASSERT(editor == m_editor);
+
+  onRenderTimer();
 
   // If we are changing to another state, we've to drop the image.
   if (m_pixelsMovement->isDragging())
@@ -331,6 +358,9 @@ bool MovingPixelsState::onMouseMove(Editor* editor, MouseMessage* msg)
 
   // If there is a button pressed
   if (m_pixelsMovement->isDragging()) {
+    m_renderTimer.start();
+    m_pixelsMovement->setFastMode(true);
+
     // Auto-scroll
     gfx::Point mousePos = editor->autoScroll(msg, AutoScroll::MouseDir);
 
@@ -430,7 +460,7 @@ bool MovingPixelsState::onKeyDown(Editor* editor, KeyMessage* msg)
     // The escape key drop pixels and deselect the mask.
     if (msg->scancode() == kKeyEsc) { // TODO make this key customizable
       Command* cmd = Commands::instance()->byId(CommandId::DeselectMask());
-      UIContext::instance()->executeCommand(cmd);
+      UIContext::instance()->executeCommandFromMenuOrShortcut(cmd);
     }
 
     return true;
@@ -462,19 +492,21 @@ bool MovingPixelsState::onUpdateStatusBar(Editor* editor)
   int w = int(transform.bounds().w);
   int h = int(transform.bounds().h);
   int gcd = base::gcd(w, h);
-  StatusBar::instance()->setStatusText
-    (100, ":pos: %d %d :size: %3d %3d :selsize: %d %d [%.02f%% %.02f%%] :angle: %.1f :aspect_ratio: %2d : %2d",
-     int(transform.bounds().x),
-     int(transform.bounds().y),
-     imageSize.w,
-     imageSize.h,
-     w,
-     h,
-     (double)w*100.0/imageSize.w,
-     (double)h*100.0/imageSize.h,
-     180.0 * transform.angle() / PI,
-     w/gcd,
-     h/gcd);
+  StatusBar::instance()->setStatusText(
+    100,
+    fmt::format(
+      ":pos: {} {} :size: {:3d} {:3d} :selsize: {} {} [{:.02f}% {:.02f}%] :angle: {:.1f} :aspect_ratio: {}:{}",
+      int(transform.bounds().x),
+      int(transform.bounds().y),
+      imageSize.w,
+      imageSize.h,
+      w,
+      h,
+      (double)w*100.0/imageSize.w,
+      (double)h*100.0/imageSize.h,
+      180.0 * transform.angle() / PI,
+      w/gcd,
+      h/gcd));
 
   return true;
 }
@@ -501,9 +533,18 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
     return;
 
   // We don't need to drop the pixels if a MoveMaskCommand of Content is executed.
-  if (MoveMaskCommand* moveMaskCmd = dynamic_cast<MoveMaskCommand*>(ev.command())) {
+  if (MoveMaskCommand* moveMaskCmd = dynamic_cast<MoveMaskCommand*>(command)) {
     if (moveMaskCmd->getTarget() == MoveMaskCommand::Content) {
-      // Do not drop pixels
+      gfx::Point delta = moveMaskCmd->getMoveThing().getDelta(UIContext::instance());
+      // Verify Shift condition of the MoveMaskCommand (i.e. wrap = true)
+      if (moveMaskCmd->isWrap()) {
+        m_pixelsMovement->shift(delta.x, delta.y);
+      }
+      else {
+        translate(delta);
+      }
+      // We've processed the selection content movement right here.
+      ev.cancel();
       return;
     }
   }
@@ -561,7 +602,7 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
   // avoid dropping the floating region of pixels.
   else if (command->id() == CommandId::Flip()) {
     if (FlipCommand* flipCommand = dynamic_cast<FlipCommand*>(command)) {
-      m_pixelsMovement->flipImage(flipCommand->getFlipType());
+      this->flip(flipCommand->getFlipType());
 
       ev.cancel();
       return;
@@ -571,11 +612,27 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
   else if (command->id() == CommandId::Rotate()) {
     if (RotateCommand* rotate = dynamic_cast<RotateCommand*>(command)) {
       if (rotate->flipMask()) {
-        m_pixelsMovement->rotate(rotate->angle());
+        this->rotate(rotate->angle());
 
         ev.cancel();
         return;
       }
+    }
+  }
+  // We can use previous/next frames while transforming the selection
+  // to switch between frames
+  else if (command->id() == CommandId::GotoPreviousFrame() ||
+           command->id() == CommandId::GotoPreviousFrameWithSameTag()) {
+    if (m_pixelsMovement->gotoFrame(-1)) {
+      ev.cancel();
+      return;
+    }
+  }
+  else if (command->id() == CommandId::GotoNextFrame() ||
+           command->id() == CommandId::GotoNextFrameWithSameTag()) {
+    if (m_pixelsMovement->gotoFrame(+1)) {
+      ev.cancel();
+      return;
     }
   }
 
@@ -595,8 +652,10 @@ void MovingPixelsState::onBeforeFrameChanged(Editor* editor)
   if (!isActiveDocument())
     return;
 
-  if (m_pixelsMovement)
+  if (m_pixelsMovement &&
+      !m_pixelsMovement->canHandleFrameChange()) {
     dropPixels();
+  }
 }
 
 void MovingPixelsState::onBeforeLayerChanged(Editor* editor)
@@ -618,6 +677,12 @@ void MovingPixelsState::onTransparentColorChange()
     opaque ?
       app::Color::fromMask():
       Preferences::instance().selection.transparentColor());
+}
+
+void MovingPixelsState::onRenderTimer()
+{
+  m_pixelsMovement->setFastMode(false);
+  m_renderTimer.stop();
 }
 
 void MovingPixelsState::onDropPixels(ContextBarObserver::DropAction action)
@@ -698,7 +763,7 @@ void MovingPixelsState::removeAsEditorObserver()
 
 void MovingPixelsState::removePixelsMovement()
 {
-  m_pixelsMovement.reset(nullptr);
+  m_pixelsMovement.reset();
   m_ctxConn.disconnect();
   m_opaqueConn.disconnect();
   m_transparentConn.disconnect();

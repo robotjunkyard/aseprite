@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -24,6 +25,8 @@
 namespace app {
 
 namespace {
+
+const int kOpacityThreshold = 1;
 
 bool get_cel_pixel(const Cel* cel,
                    const double x,
@@ -88,10 +91,11 @@ void ColorPicker::pickColor(const Site& site,
       m_color = app::Color::fromImage(
         sprite->pixelFormat(),
         render::get_sprite_pixel(sprite, pos.x, pos.y,
-                                 site.frame(), proj));
+                                 site.frame(), proj,
+                                 Preferences::instance().experimental.newBlend()));
 
       doc::CelList cels;
-      sprite->pickCels(pos.x, pos.y, site.frame(), 128,
+      sprite->pickCels(pos.x, pos.y, site.frame(), kOpacityThreshold,
                        sprite->allVisibleLayers(), cels);
       if (!cels.empty())
         m_layer = cels.front()->layer();
@@ -125,7 +129,7 @@ void ColorPicker::pickColor(const Site& site,
 
     case FromFirstReferenceLayer: {
       doc::CelList cels;
-      sprite->pickCels(pos.x, pos.y, site.frame(), 128,
+      sprite->pickCels(pos.x, pos.y, site.frame(), kOpacityThreshold,
                        sprite->allVisibleReferenceLayers(), cels);
 
       for (const Cel* cel : cels) {

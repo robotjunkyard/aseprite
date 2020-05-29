@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -35,18 +36,27 @@ using namespace ui;
 Params AppMenuItem::s_contextParams;
 
 AppMenuItem::AppMenuItem(const std::string& text,
-                         Command* command, const Params& params)
+                         Command* command,
+                         const Params& params)
  : MenuItem(text)
  , m_key(nullptr)
  , m_command(command)
  , m_params(params)
+ , m_isRecentFileItem(false)
  , m_native(nullptr)
 {
 }
 
 AppMenuItem::~AppMenuItem()
 {
-  delete m_native;
+  if (m_native) {
+    // Do not call disposeNative(), the native handle will be disposed
+    // when the main menu (app menu) is disposed.
+
+    // TODO improve handling of these kind of pointer from laf-os library
+
+    delete m_native;
+  }
 }
 
 void AppMenuItem::setKey(const KeyPtr& key)
@@ -59,8 +69,22 @@ void AppMenuItem::setNative(const Native& native)
 {
   if (!m_native)
     m_native = new Native(native);
-  else
+  else {
+    // Do not call disposeNative(), the native handle will be disposed
+    // when the main menu (app menu) is disposed.
+
     *m_native = native;
+  }
+}
+
+void AppMenuItem::disposeNative()
+{
+#if 0   // TODO fix this and the whole handling of native menu items from laf-os
+  if (m_native->menuItem) {
+    m_native->menuItem->dispose();
+    m_native->menuItem = nullptr;
+  }
+#endif
 }
 
 void AppMenuItem::syncNativeMenuItemKeyShortcut()
@@ -131,7 +155,7 @@ void AppMenuItem::onClick()
 
     UIContext* context = UIContext::instance();
     if (m_command->isEnabled(context)) {
-      context->executeCommand(m_command, params);
+      context->executeCommandFromMenuOrShortcut(m_command, params);
     }
   }
 }

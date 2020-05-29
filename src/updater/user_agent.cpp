@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -8,6 +9,9 @@
 #include "config.h"
 #endif
 
+#include "updater/user_agent.h"
+#include "ver/info.h"
+
 #include <string>
 #include <sstream>
 
@@ -16,6 +20,7 @@
   #include <windows.h>
 
   extern "C" BOOL IsWow64();
+  extern "C" const char* WineVersion();
 
 #elif __APPLE__ // Mac OS X
 
@@ -37,18 +42,7 @@ std::string getUserAgent()
   std::stringstream userAgent;
 
   // App name and version
-
-#ifndef PACKAGE
-#define PACKAGE ""
-#pragma message("warning: Define PACKAGE macro")
-#endif
-
-#ifndef VERSION
-#define VERSION ""
-#pragma message("warning: Define VERSION macro")
-#endif
-
-  userAgent << PACKAGE << "/" << VERSION << " (";
+  userAgent << get_app_name() << "/" << get_app_version() << " (";
 
 #if _WIN32
 
@@ -76,6 +70,9 @@ std::string getUserAgent()
 
   if (IsWow64())
     userAgent << "; WOW64";
+
+  if (const char* wineVer = WineVersion())
+    userAgent << "; Wine " << wineVer;
 
 #elif __APPLE__
 

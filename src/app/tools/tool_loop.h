@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -8,20 +9,23 @@
 #define APP_TOOLS_TOOL_LOOP_H_INCLUDED
 #pragma once
 
+#include "app/shade.h"
+#include "app/tools/dynamics.h"
 #include "app/tools/tool_loop_modifiers.h"
 #include "app/tools/trace_policy.h"
+#include "doc/brush.h"
 #include "doc/color.h"
 #include "doc/frame.h"
 #include "filters/tiled_mode.h"
 #include "gfx/point.h"
 #include "gfx/rect.h"
+#include "render/gradient.h"
 
 namespace gfx {
   class Region;
 }
 
 namespace doc {
-  class Brush;
   class Image;
   class Layer;
   class Mask;
@@ -70,6 +74,7 @@ namespace app {
 
       // Returns the brush which will be used with the tool
       virtual Brush* getBrush() = 0;
+      virtual void setBrush(const BrushRef& newBrush) = 0;
 
       // Returns the document to which belongs the sprite.
       virtual Doc* getDocument() = 0;
@@ -125,9 +130,6 @@ namespace app {
       virtual Mask* getMask() = 0;
       virtual void setMask(Mask* newMask) = 0;
 
-      // Adds a new slice (only for slice ink)
-      virtual void addSlice(doc::Slice* newSlice) = 0;
-
       // Gets mask X,Y origin coordinates
       virtual gfx::Point getMaskOrigin() = 0;
 
@@ -178,8 +180,10 @@ namespace app {
 
       virtual bool getGridVisible() = 0;
       virtual bool getSnapToGrid() = 0;
+      virtual bool isSelectingTiles() = 0;
       virtual bool getStopAtGrid() = 0; // For floodfill-like tools
       virtual gfx::Rect getGridBounds() = 0;
+      virtual bool isPixelConnectivityEightConnected() = 0;
 
       // Returns true if the figure must be filled when we release the
       // mouse (e.g. a filled rectangle, etc.)
@@ -212,6 +216,7 @@ namespace app {
       virtual TracePolicy getTracePolicy() = 0;
       virtual Symmetry* getSymmetry() = 0;
 
+      virtual const Shade& getShade() = 0;
       virtual const doc::Remap* getShadingRemap() = 0;
 
       // Used by the tool when the user cancels the operation pressing the
@@ -221,12 +226,10 @@ namespace app {
       // Returns true if the loop was canceled by the user
       virtual bool isCanceled() = 0;
 
-      // This region is modified by the ToolLoopManager so then you know
-      // what must be updated in updateDirtyArea().
-      virtual gfx::Region& getDirtyArea() = 0;
+      virtual void limitDirtyAreaToViewport(gfx::Region& rgn) = 0;
 
       // Redraws the dirty area.
-      virtual void updateDirtyArea() = 0;
+      virtual void updateDirtyArea(const gfx::Region& dirtyArea) = 0;
 
       virtual void updateStatusBar(const char* text) = 0;
       virtual gfx::Point statusBarPositionOffset() = 0;
@@ -234,6 +237,13 @@ namespace app {
       // For gradients
       virtual render::DitheringMatrix getDitheringMatrix() = 0;
       virtual render::DitheringAlgorithmBase* getDitheringAlgorithm() = 0;
+      virtual render::GradientType getGradientType() = 0;
+
+      // For freehand algorithms with dynamics
+      virtual tools::DynamicsOptions getDynamics() = 0;
+
+      // Called when the user release the mouse on SliceInk
+      virtual void onSliceRect(const gfx::Rect& bounds) = 0;
     };
 
   } // namespace tools

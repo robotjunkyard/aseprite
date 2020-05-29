@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,12 +9,11 @@
 #define APP_UI_TABS_H_INCLUDED
 #pragma once
 
-#include "app/ui/animated_widget.h"
-#include "base/shared_ptr.h"
-#include "ui/mouse_buttons.h"
+#include "ui/animated_widget.h"
 #include "ui/timer.h"
 #include "ui/widget.h"
 
+#include <memory>
 #include <vector>
 
 namespace ui {
@@ -110,7 +110,7 @@ namespace app {
 
   // Tabs control. Used to show opened documents.
   class Tabs : public ui::Widget
-             , public AnimatedWidget {
+             , public ui::AnimatedWidget {
     struct Tab {
       TabView* view;
       std::string text;
@@ -135,7 +135,7 @@ namespace app {
       }
     };
 
-    typedef base::SharedPtr<Tab> TabPtr;
+    typedef std::shared_ptr<Tab> TabPtr;
 
     typedef std::vector<TabPtr> TabsList;
     typedef TabsList::iterator TabsListIterator;
@@ -234,6 +234,7 @@ namespace app {
     TabsDelegate* m_delegate;
 
     // Variables for animation purposes
+    TabPtr m_addedTab;
     TabPtr m_removedTab;
 
     ////////////////////////////////////////

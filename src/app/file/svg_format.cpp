@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (c) 2018-2019  Igara Studio S.A.
+// Copyright (c) 2018-2020  Igara Studio S.A.
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -17,6 +17,7 @@
 #include "app/file/format_options.h"
 #include "app/pref/preferences.h"
 #include "base/cfile.h"
+#include "base/clamp.h"
 #include "base/file_handle.h"
 #include "doc/doc.h"
 #include "ui/window.h"
@@ -34,7 +35,7 @@ class SvgFormat : public FileFormat {
     SvgOptions() : pixelScale(1) { }
     int pixelScale;
   };
-  
+
   const char* onGetName() const override {
     return "svg";
   }
@@ -64,7 +65,7 @@ class SvgFormat : public FileFormat {
 #ifdef ENABLE_SAVE
   bool onSave(FileOp* fop) override;
 #endif
-  base::SharedPtr<FormatOptions> onGetFormatOptions(FileOp* fop) override;
+  FormatOptionsPtr onAskUserForFormatOptions(FileOp* fop) override;
 };
 
 FileFormat* CreateSvgFormat()
@@ -80,8 +81,8 @@ bool SvgFormat::onSave(FileOp* fop)
 {
   const Image* image = fop->sequenceImage();
   int x, y, c, r, g, b, a, alpha;
-  const base::SharedPtr<SvgOptions> svg_options = fop->formatOptions();
-  const int pixelScaleValue = MID(0, svg_options->pixelScale, 10000);
+  const auto svg_options = std::static_pointer_cast<SvgOptions>(fop->formatOptions());
+  const int pixelScaleValue = base::clamp(svg_options->pixelScale, 0, 10000);
   FileHandle handle(open_file_with_exception_sync_on_close(fop->filename(), "wb"));
   FILE* f = handle.get();
   auto printcol = [f](int x, int y,int r, int g, int b, int a, int pxScale) {
@@ -164,46 +165,40 @@ bool SvgFormat::onSave(FileOp* fop)
 #endif
 
 // Shows the SVG configuration dialog.
-base::SharedPtr<FormatOptions> SvgFormat::onGetFormatOptions(FileOp* fop)
+FormatOptionsPtr SvgFormat::onAskUserForFormatOptions(FileOp* fop)
 {
-  base::SharedPtr<SvgOptions> svg_options;
-  if (fop->document()->getFormatOptions())
-    svg_options = base::SharedPtr<SvgOptions>(fop->document()->getFormatOptions());
-  
-  if (!svg_options)
-    svg_options.reset(new SvgOptions);
-  
+  auto opts = fop->formatOptionsOfDocument<SvgOptions>();
 #ifdef ENABLE_UI
   if (fop->context() && fop->context()->isUIAvailable()) {
     try {
       auto& pref = Preferences::instance();
-      
+
       if (pref.isSet(pref.svg.pixelScale))
-        svg_options->pixelScale = pref.svg.pixelScale();
-      
+        opts->pixelScale = pref.svg.pixelScale();
+
      if (pref.svg.showAlert()) {
         app::gen::SvgOptions win;
-        win.pxsc()->setTextf("%d", svg_options->pixelScale);
+        win.pxsc()->setTextf("%d", opts->pixelScale);
         win.openWindowInForeground();
-      
+
         if (win.closer() == win.ok()) {
           pref.svg.pixelScale((int)win.pxsc()->textInt());
           pref.svg.showAlert(!win.dontShow()->isSelected());
-          
-          svg_options->pixelScale = pref.svg.pixelScale();
+
+          opts->pixelScale = pref.svg.pixelScale();
         }
         else {
-          svg_options.reset(nullptr);
+          opts.reset();
         }
       }
     }
     catch (std::exception& e) {
       Console::showException(e);
-      return base::SharedPtr<SvgOptions>(nullptr);
+      return std::shared_ptr<SvgOptions>(nullptr);
     }
   }
 #endif
-  return svg_options;
+  return opts;
 }
 
 } // namespace app

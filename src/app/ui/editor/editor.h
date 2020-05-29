@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (c) 2018 Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -24,6 +24,7 @@
 #include "doc/algorithm/flip_type.h"
 #include "doc/frame.h"
 #include "doc/image_buffer.h"
+#include "doc/selected_objects.h"
 #include "filters/tiled_mode.h"
 #include "gfx/fwd.h"
 #include "obs/connection.h"
@@ -35,6 +36,8 @@
 #include "ui/pointer_type.h"
 #include "ui/timer.h"
 #include "ui/widget.h"
+
+#include <set>
 
 namespace doc {
   class Layer;
@@ -97,6 +100,8 @@ namespace app {
       MOUSE,                    // Zoom from cursor
     };
 
+    static ui::WidgetType Type();
+
     Editor(Doc* document, EditorFlags flags = kDefaultEditorFlags);
     ~Editor();
 
@@ -128,6 +133,10 @@ namespace app {
     EditorFlags editorFlags() const { return m_flags; }
     void setEditorFlags(EditorFlags flags) { m_flags = flags; }
 
+    bool isExtraCelLocked() const {
+      return m_flashing != Flashing::None;
+    }
+
     Doc* document() { return m_document; }
     Sprite* sprite() { return m_sprite; }
     Layer* layer() { return m_layer; }
@@ -146,12 +155,13 @@ namespace app {
 
     void setZoom(const render::Zoom& zoom);
     void setDefaultScroll();
+    void setScrollToCenter();
     void setScrollAndZoomToFitScreen();
     void setEditorScroll(const gfx::Point& scroll);
     void setEditorZoom(const render::Zoom& zoom);
 
     // Updates the Editor's view.
-    void updateEditor();
+    void updateEditor(const bool restoreScrollPos);
 
     // Draws the sprite taking care of the whole clipping region.
     void drawSpriteClipped(const gfx::Region& updateRegion);
@@ -185,6 +195,7 @@ namespace app {
     gfx::Point mainTilePosition() const;
     void expandRegionByTiledMode(gfx::Region& rgn,
                                  const bool withProj) const;
+    void collapseRegionByTiledMode(gfx::Region& rgn) const;
 
     // Changes the scroll to see the given point as the center of the editor.
     void centerInSpritePoint(const gfx::Point& spritePos);
@@ -194,8 +205,8 @@ namespace app {
     // Control scroll when cursor goes out of the editor viewport.
     gfx::Point autoScroll(ui::MouseMessage* msg, AutoScroll dir);
 
-    tools::Tool* getCurrentEditorTool();
-    tools::Ink* getCurrentEditorInk();
+    tools::Tool* getCurrentEditorTool() const;
+    tools::Ink* getCurrentEditorInk() const;
 
     tools::ToolLoopModifiers getToolLoopModifiers() const { return m_toolLoopModifiers; }
     bool isAutoSelectLayer();
@@ -210,6 +221,13 @@ namespace app {
     // selection mode is the default one which prioritizes and easy
     // way to move the selection.
     bool canStartMovingSelectionPixels();
+
+    // Returns true if the range selected in the timeline should be
+    // kept. E.g. When we are moving/transforming pixels on multiple
+    // cels, the MovingPixelsState can handle previous/next frame
+    // commands, so it's nice to keep the timeline range intact while
+    // we are in the MovingPixelsState.
+    bool keepTimelineRange();
 
     // Returns the element that will be modified if the mouse is used
     // in the given position.
@@ -271,6 +289,18 @@ namespace app {
     // freehand tool is pressed.
     bool startStraightLineWithFreehandTool(const ui::MouseMessage* msg);
 
+    // Functions to handle the set of selected slices.
+    bool isSliceSelected(const doc::Slice* slice) const;
+    void clearSlicesSelection();
+    void selectSlice(const doc::Slice* slice);
+    bool selectSliceBox(const gfx::Rect& box);
+    void selectAllSlices();
+    bool hasSelectedSlices() const { return !m_selectedSlices.empty(); }
+
+    // Called by DocView's InputChainElement::onCancel() impl when Esc
+    // key is pressed to cancel the active selection.
+    void cancelSelections();
+
     static void registerCommands();
 
   protected:
@@ -291,13 +321,16 @@ namespace app {
     void onSpritePixelRatioChanged(DocEvent& ev) override;
     void onBeforeRemoveLayer(DocEvent& ev) override;
     void onRemoveCel(DocEvent& ev) override;
-    void onAddFrameTag(DocEvent& ev) override;
-    void onRemoveFrameTag(DocEvent& ev) override;
+    void onAddTag(DocEvent& ev) override;
+    void onRemoveTag(DocEvent& ev) override;
+    void onRemoveSlice(DocEvent& ev) override;
 
     // ActiveToolObserver impl
     void onActiveToolChange(tools::Tool* tool) override;
 
   private:
+    enum class Flashing { None, WithFlashExtraCel, WaitingDeferedPaint };
+
     void setStateInternal(const EditorStatePtr& newState);
     void updateQuicktool();
     void updateToolByTipProximity(ui::PointerType pointerType);
@@ -394,6 +427,7 @@ namespace app {
     EditorFlags m_flags;
 
     bool m_secondaryButton;
+    Flashing m_flashing;
 
     // Animation speed multiplier.
     double m_aniSpeed;
@@ -415,14 +449,15 @@ namespace app {
     gfx::Rect m_perfInfoBounds;
 #endif
 
+    // For slices
+    doc::SelectedObjects m_selectedSlices;
+
     // The render engine must be shared between all editors so when a
     // DrawingState is being used in one editor, other editors for the
     // same document can show the same preview image/stroke being drawn
     // (search for Render::setPreviewImage()).
     static EditorRender* m_renderEngine;
   };
-
-  ui::WidgetType editor_type();
 
 } // namespace app
 

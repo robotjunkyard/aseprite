@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -15,6 +15,7 @@
 #include "app/modules/gui.h"
 #include "app/ui/editor/editor_view.h"
 #include "app/ui/skin/skin_theme.h"
+#include "base/clamp.h"
 #include "os/font.h"
 #include "os/surface.h"
 #include "os/system.h"
@@ -52,6 +53,7 @@ Tabs::Tabs(TabsDelegate* delegate)
   , m_clickedCloseButton(false)
   , m_selected(nullptr)
   , m_delegate(delegate)
+  , m_addedTab(nullptr)
   , m_removedTab(nullptr)
   , m_isDragging(false)
   , m_dragCopy(false)
@@ -68,6 +70,7 @@ Tabs::Tabs(TabsDelegate* delegate)
 
 Tabs::~Tabs()
 {
+  m_addedTab.reset();
   m_removedTab.reset();
 
   // Stop animation
@@ -99,6 +102,8 @@ void Tabs::addTab(TabView* tabView, bool from_drop, int pos)
 
   tab->oldWidth = tab->width;
   tab->modified = (m_delegate ? m_delegate->isTabModified(this, tabView): false);
+
+  m_addedTab = tab;
 }
 
 void Tabs::removeTab(TabView* tabView, bool with_animation)
@@ -149,7 +154,7 @@ void Tabs::updateTabs()
   double tabWidth = defTabWidth;
   if (tabWidth * m_list.size() > availWidth) {
     tabWidth = availWidth / double(m_list.size());
-    tabWidth = MAX(4*ui::guiscale(), tabWidth);
+    tabWidth = std::max(double(4*ui::guiscale()), tabWidth);
   }
   double x = 0.0;
   int i = 0;
@@ -254,7 +259,7 @@ void Tabs::setDropViewPreview(const gfx::Point& pos, TabView* view)
 
   if (!m_list.empty()) {
     newIndex = (pos.x - bounds().x) / m_list[0]->width;
-    newIndex = MID(0, newIndex, (int)m_list.size());
+    newIndex = base::clamp(newIndex, 0, (int)m_list.size());
   }
   else
     newIndex = 0;
@@ -425,7 +430,7 @@ bool Tabs::onProcessMessage(Message* msg)
         if (it != m_list.end()) {
           int index = (it - m_list.begin());
           int newIndex = index + dz;
-          newIndex = MID(0, newIndex, int(m_list.size())-1);
+          newIndex = base::clamp(newIndex, 0, int(m_list.size())-1);
           if (newIndex != index) {
             selectTabInternal(m_list[newIndex]);
           }
@@ -497,7 +502,7 @@ void Tabs::onPaint(PaintEvent& ev)
         (tab->view != m_dragTab->view) ||
         (m_dragCopy)) {
       int dy = 0;
-      if (animation() == ANI_ADDING_TAB && tab == m_selected) {
+      if (animation() == ANI_ADDING_TAB && tab == m_addedTab) {
         double t = animationTime();
         dy = int(box.h - box.h * t);
       }
@@ -791,6 +796,8 @@ void Tabs::onAnimationFrame()
 
 void Tabs::onAnimationStop(int animation)
 {
+  m_addedTab.reset();
+
   if (m_list.empty()) {
     Widget* root = window();
     if (root)
@@ -930,7 +937,10 @@ void Tabs::createFloatingOverlay(Tab* tab)
   // Fill the surface with pink color
   {
     os::SurfaceLock lock(surface);
-    surface->fillRect(gfx::rgba(0, 0, 0, 0), gfx::Rect(0, 0, surface->width(), surface->height()));
+    os::Paint paint;
+    paint.color(gfx::rgba(0, 0, 0, 0));
+    paint.style(os::Paint::Fill);
+    surface->drawRect(gfx::Rect(0, 0, surface->width(), surface->height()), paint);
   }
   {
     Graphics g(surface, 0, 0);
@@ -956,6 +966,8 @@ void Tabs::destroyFloatingTab()
 
     tab->oldX = tab->x;
     tab->oldWidth = 0;
+
+    m_addedTab = tab;
   }
 }
 
@@ -981,14 +993,14 @@ void Tabs::updateDragTabIndexes(int mouseX, bool startAni)
     int i = (mouseX - m_border*guiscale() - bounds().x) / m_dragTab->width;
 
     if (m_dragCopy) {
-      i = MID(0, i, int(m_list.size()));
+      i = base::clamp(i, 0, int(m_list.size()));
       if (i != m_dragCopyIndex) {
         m_dragCopyIndex = i;
         startAni = true;
       }
     }
     else if (hasMouseOver()) {
-      i = MID(0, i, int(m_list.size())-1);
+      i = base::clamp(i, 0, int(m_list.size())-1);
       if (i != m_dragTabIndex) {
         m_list.erase(m_list.begin()+m_dragTabIndex);
         m_list.insert(m_list.begin()+i, m_selected);

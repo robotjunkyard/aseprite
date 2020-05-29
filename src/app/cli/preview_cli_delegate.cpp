@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -17,7 +17,10 @@
 #include "app/doc_exporter.h"
 #include "app/file/file.h"
 #include "base/fs.h"
+#include "doc/layer.h"
 #include "doc/sprite.h"
+#include "fmt/format.h"
+#include "ver/info.h"
 
 #include <iostream>
 #include <memory>
@@ -26,12 +29,12 @@ namespace app {
 
 void PreviewCliDelegate::showHelp(const AppOptions& options)
 {
-  std::cout << "- Show " PACKAGE " CLI usage\n";
+  std::cout << fmt::format("- Show {} CLI usage\n", get_app_name());
 }
 
 void PreviewCliDelegate::showVersion()
 {
-  std::cout << "- Show " PACKAGE " version\n";
+  std::cout << fmt::format("- Show {} version\n", get_app_name());
 }
 
 void PreviewCliDelegate::uiMode()
@@ -96,7 +99,10 @@ void PreviewCliDelegate::saveFile(Context* ctx, const CliOpenFile& cof)
   }
 
   if (cof.trim) {
-    std::cout << "  - Trim\n";
+    if (cof.trimByGrid)
+      std::cout << "  - Trim by Grid\n";
+    else
+      std::cout << "  - Trim\n";
   }
 
   if (cof.ignoreEmpty) {
@@ -108,9 +114,11 @@ void PreviewCliDelegate::saveFile(Context* ctx, const CliOpenFile& cof)
             << cof.document->sprite()->height() << "\n";
 
   showLayersFilter(cof);
+  std::cout << "  - Visible Layer:\n";
+  showLayerVisibility(cof.document->sprite()->root(), "    ");
 
-  if (cof.hasFrameTag()) {
-    std::cout << "  - Frame tag: '" << cof.frameTag << "'\n";
+  if (cof.hasTag()) {
+    std::cout << "  - Tag: '" << cof.tag << "'\n";
   }
 
   if (cof.hasSlice()) {
@@ -194,8 +202,8 @@ void PreviewCliDelegate::exportFiles(Context* ctx, DocExporter& exporter)
   if (!exporter.dataFilename().empty()) {
     std::string format = "Unknown";
     switch (exporter.dataFormat()) {
-      case DocExporter::JsonHashDataFormat: format = "JSON Hash"; break;
-      case DocExporter::JsonArrayDataFormat: format = "JSON Array"; break;
+      case SpriteSheetDataFormat::JsonHash: format = "JSON Hash"; break;
+      case SpriteSheetDataFormat::JsonArray: format = "JSON Array"; break;
     }
     std::cout << "  - Save data file: '" << exporter.dataFilename() << "'\n"
               << "  - Data format: " << format << "\n";
@@ -208,8 +216,8 @@ void PreviewCliDelegate::exportFiles(Context* ctx, DocExporter& exporter)
 }
 
 #ifdef ENABLE_SCRIPTING
-void PreviewCliDelegate::execScript(const std::string& filename,
-                                    const Params& params)
+int PreviewCliDelegate::execScript(const std::string& filename,
+                                   const Params& params)
 {
   std::cout << "- Run script: '" << filename << "'\n";
   if (!params.empty()) {
@@ -218,6 +226,7 @@ void PreviewCliDelegate::execScript(const std::string& filename,
       std::cout << "    " << kv.first << "=\"" << kv.second << "\",\n";
     std::cout << "  }\n";
   }
+  return 0;
 }
 #endif // ENABLE_SCRIPTING
 
@@ -235,6 +244,19 @@ void PreviewCliDelegate::showLayersFilter(const CliOpenFile& cof)
     for (const auto& filter : cof.excludeLayers)
       std::cout << ' ' << filter;
     std::cout << "\n";
+  }
+}
+
+void PreviewCliDelegate::showLayerVisibility(const doc::LayerGroup* group,
+                                             const std::string& indent)
+{
+  for (auto layer : group->layers()) {
+    if (!layer->isVisible())
+      continue;
+    std::cout << indent << "- " << layer->name() << "\n";
+    if (layer->isGroup())
+      showLayerVisibility(static_cast<const LayerGroup*>(layer),
+                          indent + "  ");
   }
 }
 

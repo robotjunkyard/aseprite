@@ -1,4 +1,5 @@
 // Aseprite Document Library
+// Copyright (c) 2020 Igara Studio S.A.
 // Copyright (c) 2001-2016 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -86,6 +87,15 @@ namespace doc {
   inline uint16_t gray(uint8_t v) {
     return graya(v, 255);
   }
+
+  //////////////////////////////////////////////////////////////////////
+  // Conversions
+
+  typedef color_t (*rgba_to_graya_func)(const color_t c);
+
+  color_t rgba_to_graya_using_hsv(const color_t c);
+  color_t rgba_to_graya_using_hsl(const color_t c);
+  color_t rgba_to_graya_using_luma(const color_t c);
 
 } // namespace doc
 

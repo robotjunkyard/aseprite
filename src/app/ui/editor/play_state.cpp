@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -20,8 +21,8 @@
 #include "app/ui/editor/scrolling_state.h"
 #include "app/ui/skin/skin_theme.h"
 #include "app/ui_context.h"
-#include "doc/frame_tag.h"
 #include "doc/handle_anidir.h"
+#include "doc/tag.h"
 #include "ui/manager.h"
 #include "ui/message.h"
 #include "ui/system.h"
@@ -63,8 +64,8 @@ void PlayState::onEnterState(Editor* editor)
   if (!m_playAll)
     m_tag = m_editor
       ->getCustomizationDelegate()
-      ->getFrameTagProvider()
-      ->getFrameTagByFrame(m_refFrame, true);
+      ->getTagProvider()
+      ->getTagByFrame(m_refFrame, true);
 
   // Go to the first frame of the animation or active frame tag
   if (m_playOnce) {
@@ -113,7 +114,7 @@ bool PlayState::onMouseDown(Editor* editor, MouseMessage* msg)
   context->setActiveView(editor->getDocView());
 
   // A click with right-button stops the animation
-  if (msg->buttons() == kButtonRight) {
+  if (msg->button() == kButtonRight) {
     editor->stop();
     return true;
   }
@@ -167,7 +168,7 @@ bool PlayState::onSetCursor(Editor* editor, const gfx::Point& mouseScreenPos)
   return true;
 }
 
-void PlayState::onRemoveFrameTag(Editor* editor, doc::FrameTag* tag)
+void PlayState::onRemoveTag(Editor* editor, doc::Tag* tag)
 {
   if (m_tag == tag)
     m_tag = nullptr;

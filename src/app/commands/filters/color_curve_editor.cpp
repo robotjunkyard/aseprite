@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,6 +11,7 @@
 
 #include "app/commands/filters/color_curve_editor.h"
 
+#include "base/clamp.h"
 #include "filters/color_curve.h"
 #include "ui/alert.h"
 #include "ui/entry.h"
@@ -42,7 +44,7 @@ enum {
   STATUS_SCALING,
 };
 
-ColorCurveEditor::ColorCurveEditor(ColorCurve* curve, const gfx::Rect& viewBounds)
+ColorCurveEditor::ColorCurveEditor(const ColorCurve& curve, const gfx::Rect& viewBounds)
   : Widget(kGenericWidget)
   , m_curve(curve)
   , m_viewBounds(viewBounds)
@@ -74,9 +76,8 @@ bool ColorCurveEditor::onProcessMessage(Message* msg)
         }
 
         case kKeyDel: {
-          gfx::Point* point = getClosestPoint(screenToView(get_mouse_position()));
-          if (point)
-            removePoint(point);
+          if (gfx::Point* point = getClosestPoint(screenToView(get_mouse_position())))
+            removePoint(*point);
           break;
         }
 
@@ -139,8 +140,8 @@ bool ColorCurveEditor::onProcessMessage(Message* msg)
           if (m_editPoint) {
             gfx::Point mousePos = static_cast<MouseMessage*>(msg)->position();
             *m_editPoint = screenToView(mousePos);
-            m_editPoint->x = MID(m_viewBounds.x, m_editPoint->x, m_viewBounds.x+m_viewBounds.w-1);
-            m_editPoint->y = MID(m_viewBounds.y, m_editPoint->y, m_viewBounds.y+m_viewBounds.h-1);
+            m_editPoint->x = base::clamp(m_editPoint->x, m_viewBounds.x, m_viewBounds.x2()-1);
+            m_editPoint->y = base::clamp(m_editPoint->y, m_viewBounds.y, m_viewBounds.y2()-1);
 
             // TODO this should be optional
             CurveEditorChange();
@@ -203,21 +204,21 @@ void ColorCurveEditor::onPaint(ui::PaintEvent& ev)
 
   // Get curve values
   std::vector<int> values(m_viewBounds.w);
-  m_curve->getValues(m_viewBounds.x, m_viewBounds.x+m_viewBounds.w-1, values);
+  m_curve.getValues(m_viewBounds.x, m_viewBounds.x+m_viewBounds.w-1, values);
 
   // Draw curve
   for (c = client.x; c < client.x+client.w; ++c) {
     pt = clientToView(gfx::Point(c, 0));
-    pt.x = MID(m_viewBounds.x, pt.x, m_viewBounds.x+m_viewBounds.w-1);
+    pt.x = base::clamp(pt.x, m_viewBounds.x, m_viewBounds.x2()-1);
     pt.y = values[pt.x - m_viewBounds.x];
-    pt.y = MID(m_viewBounds.y, pt.y, m_viewBounds.y+m_viewBounds.h-1);
+    pt.y = base::clamp(pt.y, m_viewBounds.y, m_viewBounds.y2()-1);
     pt = viewToClient(pt);
 
     g->putPixel(gfx::rgba(255, 255, 255), c, pt.y);
   }
 
   // Draw nodes
-  for (const gfx::Point& point : *m_curve) {
+  for (const gfx::Point& point : m_curve) {
     pt = viewToClient(point);
 
     gfx::Rect box(0, 0, 5*guiscale(), 5*guiscale());
@@ -241,7 +242,7 @@ gfx::Point* ColorCurveEditor::getClosestPoint(const gfx::Point& viewPt)
   gfx::Point* point_found = NULL;
   double dist_min = 0;
 
-  for (gfx::Point& point : *m_curve) {
+  for (gfx::Point& point : m_curve) {
     int dx = point.x - viewPt.x;
     int dy = point.y - viewPt.y;
     double dist = std::sqrt(static_cast<double>(dx*dx + dy*dy));
@@ -269,12 +270,12 @@ bool ColorCurveEditor::editNodeManually(gfx::Point& viewPt)
   if (window.closer() == window.ok()) {
     viewPt.x = window.x()->textInt();
     viewPt.y = window.y()->textInt();
-    viewPt.x = MID(0, viewPt.x, 255);
-    viewPt.y = MID(0, viewPt.y, 255);
+    viewPt.x = base::clamp(viewPt.x, 0, 255);
+    viewPt.y = base::clamp(viewPt.y, 0, 255);
     return true;
   }
   else if (window.closer() == window.deleteButton()) {
-    removePoint(&viewPt);
+    removePoint(viewPt);
     return true;
   }
   else {
@@ -307,16 +308,16 @@ gfx::Point ColorCurveEditor::clientToView(const gfx::Point& clientPt)
 void ColorCurveEditor::addPoint(const gfx::Point& viewPoint)
 {
   // TODO Undo history
-  m_curve->addPoint(viewPoint);
+  m_curve.addPoint(viewPoint);
 
   invalidate();
   CurveEditorChange();
 }
 
-void ColorCurveEditor::removePoint(gfx::Point* viewPoint)
+void ColorCurveEditor::removePoint(const gfx::Point& viewPoint)
 {
   // TODO Undo history
-  m_curve->removePoint(*viewPoint);
+  m_curve.removePoint(viewPoint);
 
   m_hotPoint = nullptr;
   m_editPoint = nullptr;

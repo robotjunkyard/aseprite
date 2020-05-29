@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -30,6 +31,21 @@ CmdTransaction::CmdTransaction(const std::string& label,
 {
 }
 
+CmdTransaction* CmdTransaction::moveToEmptyCopy()
+{
+  CmdTransaction* copy = new CmdTransaction(m_label,
+                                            m_changeSavedState,
+                                            m_savedCounter);
+  copy->m_spritePositionBefore = m_spritePositionBefore;
+  copy->m_spritePositionAfter = m_spritePositionAfter;
+  if (m_ranges) {
+    copy->m_ranges.reset(new Ranges);
+    copy->m_ranges->m_before = std::move(m_ranges->m_before);
+    copy->m_ranges->m_after = std::move(m_ranges->m_after);
+  }
+  return copy;
+}
+
 void CmdTransaction::setNewDocRange(const DocRange& range)
 {
 #ifdef ENABLE_UI
@@ -38,7 +54,7 @@ void CmdTransaction::setNewDocRange(const DocRange& range)
 #endif
 }
 
-void CmdTransaction::commit()
+void CmdTransaction::updateSpritePositionAfter()
 {
   m_spritePositionAfter = calcSpritePosition();
 
@@ -72,10 +88,7 @@ std::istream* CmdTransaction::documentRangeAfterExecute() const
 
 void CmdTransaction::onExecute()
 {
-  CmdSequence::onExecute();
-
-  // The execution of CmdTransaction is called by Transaction at the
-  // very beginning, just to save the current sprite position.
+  // Save the current site and doc range
   m_spritePositionBefore = calcSpritePosition();
 #ifdef ENABLE_UI
   if (isDocRangeEnabled()) {
@@ -83,6 +96,9 @@ void CmdTransaction::onExecute()
     calcDocRange().write(m_ranges->m_before);
   }
 #endif
+
+  // Execute the sequence of "cmds"
+  CmdSequence::onExecute();
 
   if (m_changeSavedState)
     ++(*m_savedCounter);

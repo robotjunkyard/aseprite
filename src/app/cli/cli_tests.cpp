@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -35,8 +35,10 @@ public:
   void saveFile(Context* ctx, const CliOpenFile& cof) override { }
   void exportFiles(Context* ctx, DocExporter& exporter) override { }
 #ifdef ENABLE_SCRIPTING
-  void execScript(const std::string& filename,
-                  const Params& params) override { }
+  int execScript(const std::string& filename,
+                 const Params& params) override {
+    return 0;
+  }
 #endif
 
   bool helpWasShown() const { return m_helpWasShown; }
@@ -50,7 +52,7 @@ private:
   bool m_batchMode;
 };
 
-AppOptions args(std::initializer_list<const char*> l) {
+std::unique_ptr<AppOptions> args(std::initializer_list<const char*> l) {
   int argc = l.size()+1;
   const char** argv = new const char*[argc];
   argv[0] = "aseprite.exe";
@@ -59,7 +61,7 @@ AppOptions args(std::initializer_list<const char*> l) {
     argv[i] = *it;
     TRACE("argv[%d] = %s\n", i, argv[i]);
   }
-  AppOptions opts(argc, argv);
+  std::unique_ptr<AppOptions> opts(new AppOptions(argc, argv));
   delete[] argv;
   return opts;
 }
@@ -67,7 +69,8 @@ AppOptions args(std::initializer_list<const char*> l) {
 TEST(Cli, None)
 {
   CliTestDelegate d;
-  CliProcessor p(&d, args({ }));
+  auto a = args({ });
+  CliProcessor p(&d, *a);
   p.process(nullptr);
   EXPECT_TRUE(!d.helpWasShown());
   EXPECT_TRUE(!d.versionWasShown());
@@ -76,7 +79,8 @@ TEST(Cli, None)
 TEST(Cli, Help)
 {
   CliTestDelegate d;
-  CliProcessor p(&d, args({ "--help" }));
+  auto a = args({ "--help" });
+  CliProcessor p(&d, *a);
   p.process(nullptr);
   EXPECT_TRUE(d.helpWasShown());
 }
@@ -84,7 +88,8 @@ TEST(Cli, Help)
 TEST(Cli, Version)
 {
   CliTestDelegate d;
-  CliProcessor p(&d, args({ "--version" }));
+  auto a = args({ "--version" });
+  CliProcessor p(&d, *a);
   p.process(nullptr);
   EXPECT_TRUE(d.versionWasShown());
 }

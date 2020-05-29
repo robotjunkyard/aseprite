@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (c) 2001-2018 David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -8,15 +9,18 @@
 #define APP_SITE_H_INCLUDED
 #pragma once
 
+#include "app/doc_range.h"
 #include "doc/frame.h"
-#include "doc/selected_frames.h"
-#include "doc/selected_layers.h"
+#include "doc/palette_picks.h"
+#include "doc/selected_objects.h"
+#include "gfx/fwd.h"
 
 namespace doc {
   class Cel;
   class Image;
   class Layer;
   class Palette;
+  class RgbMap;
   class Sprite;
 } // namespace doc
 
@@ -65,28 +69,37 @@ namespace app {
     doc::Sprite* sprite() { return m_sprite; }
     doc::Layer* layer() { return m_layer; }
     doc::Cel* cel();
+    const DocRange& range() const { return m_range; }
 
     void focus(Focus focus) { m_focus = focus; }
     void document(Doc* document) { m_document = document; }
     void sprite(doc::Sprite* sprite) { m_sprite = sprite; }
     void layer(doc::Layer* layer) { m_layer = layer; }
     void frame(doc::frame_t frame) { m_frame = frame; }
+    void range(const DocRange& range);
 
-    const doc::SelectedLayers& selectedLayers() const { return m_selectedLayers; }
-    doc::SelectedLayers& selectedLayers() { return m_selectedLayers; }
-    void selectedLayers(const doc::SelectedLayers& selectedLayers) {
-      m_selectedLayers = selectedLayers;
+    const doc::SelectedLayers& selectedLayers() const { return m_range.selectedLayers(); }
+    const doc::SelectedFrames& selectedFrames() const { return m_range.selectedFrames(); }
+
+    // Selected colors selected in the ColorBar
+    const doc::PalettePicks& selectedColors() const { return m_selectedColors; }
+    doc::PalettePicks& selectedColors() { return m_selectedColors; }
+    void selectedColors(const doc::PalettePicks& colors) {
+      m_selectedColors = colors;
     }
 
-    const doc::SelectedFrames& selectedFrames() const { return m_selectedFrames; }
-    doc::SelectedFrames& selectedFrames() { return m_selectedFrames; }
-    void selectedFrames(const doc::SelectedFrames& selectedFrames) {
-      m_selectedFrames = selectedFrames;
+    const doc::SelectedObjects& selectedSlices() const { return m_selectedSlices; }
+    doc::SelectedObjects& selectedSlices() { return m_selectedSlices; }
+    void selectedSlices(const doc::SelectedObjects& set) {
+      m_selectedSlices = set;
     }
 
     doc::Palette* palette();
     doc::Image* image(int* x = nullptr, int* y = nullptr, int* opacity = nullptr) const;
     doc::Palette* palette() const;
+    doc::RgbMap* rgbMap() const;
+
+    gfx::Rect gridBounds() const;
 
   private:
     Focus m_focus;
@@ -94,8 +107,9 @@ namespace app {
     doc::Sprite* m_sprite;
     doc::Layer* m_layer;
     doc::frame_t m_frame;
-    doc::SelectedLayers m_selectedLayers;
-    doc::SelectedFrames m_selectedFrames;
+    DocRange m_range;
+    doc::PalettePicks m_selectedColors;
+    doc::SelectedObjects m_selectedSlices;
   };
 
 } // namespace app

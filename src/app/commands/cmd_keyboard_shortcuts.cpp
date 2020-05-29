@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -45,7 +45,9 @@
 
 #include "keyboard_shortcuts.xml.h"
 
+#include <algorithm>
 #include <map>
+#include <memory>
 
 #define KEYBOARD_FILENAME_EXTENSION "aseprite-keys"
 
@@ -259,7 +261,7 @@ private:
         m_headerItem->contextXPos() +
         Graphics::measureUITextLength(
           convertKeyContextToUserFriendlyString(m_key->keycontext()), font());
-      size.w = MAX(size.w, w);
+      size.w = std::max(size.w, w);
     }
 
     if (m_key && !m_key->accels().empty()) {
@@ -464,9 +466,9 @@ private:
   AppMenuItem* m_menuitem;
   int m_level;
   ui::Accelerators m_newAccels;
-  base::SharedPtr<ui::Button> m_changeButton;
-  base::SharedPtr<ui::Button> m_deleteButton;
-  base::SharedPtr<ui::Button> m_addButton;
+  std::shared_ptr<ui::Button> m_changeButton;
+  std::shared_ptr<ui::Button> m_deleteButton;
+  std::shared_ptr<ui::Button> m_addButton;
   obs::scoped_connection m_changeConn;
   obs::scoped_connection m_deleteConn;
   obs::scoped_connection m_addConn;
@@ -780,7 +782,7 @@ private:
   void fillMenusList(ListBox* listbox, Menu* menu, int level) {
     for (auto child : menu->children()) {
       if (AppMenuItem* menuItem = dynamic_cast<AppMenuItem*>(child)) {
-        if (menuItem == AppMenus::instance()->getRecentListMenuitem())
+        if (menuItem->isRecentFileItem())
           continue;
 
         KeyItem* keyItem = new KeyItem(
@@ -917,7 +919,7 @@ void KeyboardShortcutsCommand::fillMenusKeys(app::KeyboardShortcuts& keys,
 {
   for (auto child : menu->children()) {
     if (AppMenuItem* menuItem = dynamic_cast<AppMenuItem*>(child)) {
-      if (menuItem == AppMenus::instance()->getRecentListMenuitem())
+      if (menuItem->isRecentFileItem())
         continue;
 
       if (menuItem->getCommand()) {

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,47 +10,54 @@
 #endif
 
 #include "app/app.h"
+#include "app/cmd/set_grid_bounds.h"
 #include "app/commands/command.h"
 #include "app/console.h"
 #include "app/context.h"
+#include "app/context_access.h"
 #include "app/extensions.h"
 #include "app/file/file.h"
 #include "app/file_selector.h"
 #include "app/i18n/strings.h"
 #include "app/ini_file.h"
 #include "app/launcher.h"
+#include "app/modules/gui.h"
 #include "app/pref/preferences.h"
 #include "app/recent_files.h"
 #include "app/resource_finder.h"
+#include "app/tx.h"
 #include "app/ui/color_button.h"
 #include "app/ui/pref_widget.h"
 #include "app/ui/separator_in_view.h"
 #include "app/ui/skin/skin_theme.h"
 #include "base/bind.h"
+#include "base/clamp.h"
 #include "base/convert_to.h"
 #include "base/fs.h"
 #include "base/string.h"
 #include "base/version.h"
 #include "doc/image.h"
 #include "fmt/format.h"
-#include "render/render.h"
 #include "os/display.h"
 #include "os/system.h"
+#include "render/render.h"
 #include "ui/ui.h"
 
 #include "options.xml.h"
 
 namespace app {
 
-static const char* kSectionGeneralId = "section_general";
-static const char* kSectionBgId = "section_bg";
-static const char* kSectionGridId = "section_grid";
-static const char* kSectionThemeId = "section_theme";
-static const char* kSectionExtensionsId = "section_extensions";
+namespace {
 
-static const char* kInfiniteSymbol = "\xE2\x88\x9E"; // Infinite symbol (UTF-8)
+const char* kSectionGeneralId = "section_general";
+const char* kSectionBgId = "section_bg";
+const char* kSectionGridId = "section_grid";
+const char* kSectionThemeId = "section_theme";
+const char* kSectionExtensionsId = "section_extensions";
 
-static app::gen::ColorProfileBehavior filesWithCsMap[] = {
+const char* kInfiniteSymbol = "\xE2\x88\x9E"; // Infinite symbol (UTF-8)
+
+app::gen::ColorProfileBehavior filesWithCsMap[] = {
   app::gen::ColorProfileBehavior::DISABLE,
   app::gen::ColorProfileBehavior::EMBEDDED,
   app::gen::ColorProfileBehavior::CONVERT,
@@ -58,11 +65,32 @@ static app::gen::ColorProfileBehavior filesWithCsMap[] = {
   app::gen::ColorProfileBehavior::ASK,
 };
 
-static app::gen::ColorProfileBehavior missingCsMap[] = {
+app::gen::ColorProfileBehavior missingCsMap[] = {
   app::gen::ColorProfileBehavior::DISABLE,
   app::gen::ColorProfileBehavior::ASSIGN,
   app::gen::ColorProfileBehavior::ASK,
 };
+
+class ExtensionCategorySeparator : public SeparatorInView {
+public:
+  ExtensionCategorySeparator(const Extension::Category category,
+                             const std::string& text)
+    : SeparatorInView(text, ui::HORIZONTAL)
+    , m_category(category) {
+    InitTheme.connect(
+      [this]{
+        auto b = this->border();
+        b.top(2*b.top());
+        b.bottom(2*b.bottom());
+        this->setBorder(b);
+      });
+  }
+  Extension::Category category() const { return m_category; }
+private:
+  Extension::Category m_category;
+};
+
+} // anonymous namespace
 
 using namespace ui;
 
@@ -114,6 +142,11 @@ class OptionsWindow : public app::gen::Options {
 
     Extension* extension() { return m_extension; }
 
+    Extension::Category category() const {
+      ASSERT(m_extension);
+      return m_extension->category();
+    }
+
     bool isEnabled() const {
       ASSERT(m_extension);
       return m_extension->isEnabled();
@@ -158,7 +191,8 @@ class OptionsWindow : public app::gen::Options {
 
 public:
   OptionsWindow(Context* context, int& curSection)
-    : m_pref(Preferences::instance())
+    : m_context(context)
+    , m_pref(Preferences::instance())
     , m_globPref(m_pref.document(nullptr))
     , m_docPref(m_pref.document(context->activeDocument()))
     , m_curPref(&m_docPref)
@@ -179,6 +213,10 @@ public:
     recentFiles()->setValue(m_pref.general.recentItems());
     clearRecentFiles()->Click.connect(base::Bind<void>(&OptionsWindow::onClearRecentFiles, this));
 
+    // Template item for active display color profiles
+    m_templateTextForDisplayCS = windowCs()->getItem(2)->text();
+    windowCs()->deleteItem(2);
+
     // Color profiles
     resetColorManagement()->Click.connect(base::Bind<void>(&OptionsWindow::onResetColorManagement, this));
     colorManagement()->Click.connect(base::Bind<void>(&OptionsWindow::onColorManagement, this));
@@ -189,6 +227,8 @@ public:
           workingRgbCs()->addItem(new ColorSpaceItem(cs));
       }
       updateColorProfileControls(m_pref.color.manage(),
+                                 m_pref.color.windowProfile(),
+                                 m_pref.color.windowProfileName(),
                                  m_pref.color.workingRgbSpace(),
                                  m_pref.color.filesWithProfile(),
                                  m_pref.color.missingProfile());
@@ -230,6 +270,24 @@ public:
 
     if (m_pref.general.dataRecovery())
       enableDataRecovery()->setSelected(true);
+    enableDataRecovery()->Click.connect(
+      [this](Event&){
+        const bool state = enableDataRecovery()->isSelected();
+        keepEditedSpriteData()->setEnabled(state);
+        keepEditedSpriteData()->setSelected(state);
+        keepEditedSpriteDataFor()->setEnabled(state);
+      });
+
+    if (m_pref.general.dataRecovery() &&
+        m_pref.general.keepEditedSpriteData())
+      keepEditedSpriteData()->setSelected(true);
+    else if (!m_pref.general.dataRecovery()) {
+      keepEditedSpriteData()->setEnabled(false);
+      keepEditedSpriteDataFor()->setEnabled(false);
+    }
+
+    if (m_pref.general.keepClosedSpriteOnMemory())
+      keepClosedSpriteOnMemory()->setSelected(true);
 
     if (m_pref.general.showFullPath())
       showFullPath()->setSelected(true);
@@ -237,6 +295,14 @@ public:
     dataRecoveryPeriod()->setSelectedItemIndex(
       dataRecoveryPeriod()->findItemIndexByValue(
         base::convert_to<std::string>(m_pref.general.dataRecoveryPeriod())));
+
+    keepEditedSpriteDataFor()->setSelectedItemIndex(
+      keepEditedSpriteDataFor()->findItemIndexByValue(
+        base::convert_to<std::string>(m_pref.general.keepEditedSpriteDataFor())));
+
+    keepClosedSpriteOnMemoryFor()->setSelectedItemIndex(
+      keepClosedSpriteOnMemoryFor()->findItemIndexByValue(
+        base::convert_to<std::string>(m_pref.general.keepClosedSpriteOnMemoryFor())));
 
     if (m_pref.editor.zoomFromCenterWithWheel())
       zoomFromCenterWithWheel()->setSelected(true);
@@ -380,11 +446,10 @@ public:
 
     // Links
     locateFile()->Click.connect(base::Bind<void>(&OptionsWindow::onLocateConfigFile, this));
-#if _WIN32
-    locateCrashFolder()->Click.connect(base::Bind<void>(&OptionsWindow::onLocateCrashFolder, this));
-#else
-    locateCrashFolder()->setVisible(false);
-#endif
+    if (!App::instance()->memoryDumpFilename().empty())
+      locateCrashFolder()->Click.connect(base::Bind<void>(&OptionsWindow::onLocateCrashFolder, this));
+    else
+      locateCrashFolder()->setVisible(false);
 
     // Undo preferences
     limitUndo()->Click.connect(base::Bind<void>(&OptionsWindow::onLimitUndoCheck, this));
@@ -468,6 +533,24 @@ public:
       warnings += "<<- " + Strings::alerts_restart_by_preferences_save_recovery_data_period();
     }
 
+    int newLifespan = base::convert_to<int>(keepEditedSpriteDataFor()->getValue());
+    if (keepEditedSpriteData()->isSelected() != m_pref.general.keepEditedSpriteData() ||
+        newLifespan != m_pref.general.keepEditedSpriteDataFor()) {
+      m_pref.general.keepEditedSpriteData(keepEditedSpriteData()->isSelected());
+      m_pref.general.keepEditedSpriteDataFor(newLifespan);
+
+      warnings += "<<- " + Strings::alerts_restart_by_preferences_keep_edited_sprite_data_lifespan();
+    }
+
+    double newKeepClosed = base::convert_to<double>(keepClosedSpriteOnMemoryFor()->getValue());
+    if (keepClosedSpriteOnMemory()->isSelected() != m_pref.general.keepClosedSpriteOnMemory() ||
+        newKeepClosed != m_pref.general.keepClosedSpriteOnMemoryFor()) {
+      m_pref.general.keepClosedSpriteOnMemory(keepClosedSpriteOnMemory()->isSelected());
+      m_pref.general.keepClosedSpriteOnMemoryFor(newKeepClosed);
+
+      warnings += "<<- " + Strings::alerts_restart_by_preferences_keep_closed_sprite_on_memory_for();
+    }
+
     m_pref.editor.zoomFromCenterWithWheel(zoomFromCenterWithWheel()->isSelected());
     m_pref.editor.zoomFromCenterWithKeys(zoomFromCenterWithKeys()->isSelected());
     m_pref.editor.showScrollbars(showScrollbars()->isSelected());
@@ -498,6 +581,47 @@ public:
     m_pref.color.missingProfile(
       missingCsMap[missingCs()->getSelectedItemIndex()]);
 
+    int winCs = windowCs()->getSelectedItemIndex();
+    switch (winCs) {
+      case 0:
+        m_pref.color.windowProfile(gen::WindowColorProfile::MONITOR);
+        break;
+      case 1:
+        m_pref.color.windowProfile(gen::WindowColorProfile::SRGB);
+        break;
+      default: {
+        m_pref.color.windowProfile(gen::WindowColorProfile::SPECIFIC);
+
+        std::string name;
+        int j = 2;
+        for (auto& cs : m_colorSpaces) {
+          // We add ICC profiles only
+          auto gfxCs = cs->gfxColorSpace();
+          if (gfxCs->type() != gfx::ColorSpace::ICC)
+            continue;
+
+          if (j == winCs) {
+            name = gfxCs->name();
+            os::instance()->setDisplaysColorSpace(cs);
+            break;
+          }
+          ++j;
+        }
+
+        m_pref.color.windowProfileName(name);
+        break;
+      }
+    }
+    update_displays_color_profile_from_preferences();
+
+    // Change sprite grid bounds
+    if (m_context && m_context->activeDocument()) {
+      ContextWriter writer(m_context);
+      Tx tx(m_context, Strings::commands_GridSettings(), ModifyDocument);
+      tx(new cmd::SetGridBounds(writer.sprite(), gridBounds()));
+      tx.commit();
+    }
+
     m_curPref->show.grid(gridVisible()->isSelected());
     m_curPref->grid.bounds(gridBounds());
     m_curPref->grid.color(gridColor()->getColor());
@@ -521,7 +645,7 @@ public:
 
     int undo_size_limit_value;
     undo_size_limit_value = undoSizeLimit()->textInt();
-    undo_size_limit_value = MID(0, undo_size_limit_value, 999999);
+    undo_size_limit_value = base::clamp(undo_size_limit_value, 0, 999999);
 
     m_pref.undo.sizeLimit(undo_size_limit_value);
     m_pref.undo.gotoModified(undoGotoModified()->isSelected());
@@ -707,6 +831,8 @@ private:
 
   void onColorManagement() {
     const bool state = colorManagement()->isSelected();
+    windowCsLabel()->setEnabled(state);
+    windowCs()->setEnabled(state);
     workingRgbCsLabel()->setEnabled(state);
     workingRgbCs()->setEnabled(state);
     filesWithCsLabel()->setEnabled(state);
@@ -717,17 +843,53 @@ private:
 
   void onResetColorManagement() {
     updateColorProfileControls(m_pref.color.manage.defaultValue(),
+                               m_pref.color.windowProfile.defaultValue(),
+                               m_pref.color.windowProfileName.defaultValue(),
                                m_pref.color.workingRgbSpace.defaultValue(),
                                m_pref.color.filesWithProfile.defaultValue(),
                                m_pref.color.missingProfile.defaultValue());
   }
 
   void updateColorProfileControls(const bool manage,
+                                  const app::gen::WindowColorProfile& windowProfile,
+                                  const std::string& windowProfileName,
                                   const std::string& workingRgbSpace,
                                   const app::gen::ColorProfileBehavior& filesWithProfile,
                                   const app::gen::ColorProfileBehavior& missingProfile) {
     colorManagement()->setSelected(manage);
 
+    // Window color profile
+    {
+      int i = 0;
+      if (windowProfile == gen::WindowColorProfile::MONITOR)
+        i = 0;
+      else if (windowProfile == gen::WindowColorProfile::SRGB)
+        i = 1;
+
+      // Delete previous added items in the combobox for each display
+      // (we'll re-add them below).
+      while (windowCs()->getItem(2))
+        windowCs()->deleteItem(2);
+
+      int j = 2;
+      for (auto& cs : m_colorSpaces) {
+        // We add ICC profiles only
+        auto gfxCs = cs->gfxColorSpace();
+        if (gfxCs->type() != gfx::ColorSpace::ICC)
+          continue;
+
+        auto name = gfxCs->name();
+        windowCs()->addItem(fmt::format(m_templateTextForDisplayCS, name));
+        if (windowProfile == gen::WindowColorProfile::SPECIFIC &&
+            windowProfileName == name) {
+          i = j;
+        }
+        ++j;
+      }
+      windowCs()->setSelectedItemIndex(i);
+    }
+
+    // Working color profile
     for (auto child : *workingRgbCs()) {
       if (child->text() == workingRgbSpace) {
         workingRgbCs()->setSelectedItem(child);
@@ -757,12 +919,13 @@ private:
     exportAnimationInSequenceAlert()->resetWithDefaultValue();
     overwriteFilesOnExportAlert()->resetWithDefaultValue();
     overwriteFilesOnExportSpriteSheetAlert()->resetWithDefaultValue();
-    gifOptionsAlert()->resetWithDefaultValue();
-    jpegOptionsAlert()->resetWithDefaultValue();
-    svgOptionsAlert()->resetWithDefaultValue();
     advancedModeAlert()->resetWithDefaultValue();
     invalidFgBgColorAlert()->resetWithDefaultValue();
     runScriptAlert()->resetWithDefaultValue();
+    gifOptionsAlert()->resetWithDefaultValue();
+    jpegOptionsAlert()->resetWithDefaultValue();
+    svgOptionsAlert()->resetWithDefaultValue();
+    tgaOptionsAlert()->resetWithDefaultValue();
   }
 
   void onChangeBgScope() {
@@ -879,7 +1042,8 @@ private:
   }
 
   void onLocateCrashFolder() {
-    app::launcher::open_folder(base::get_file_path(app::memory_dump_filename()));
+    app::launcher::open_folder(
+      base::get_file_path(App::instance()->memoryDumpFilename()));
   }
 
   void onLocateConfigFile() {
@@ -898,7 +1062,7 @@ private:
   }
 
   void refillLanguages() {
-    language()->removeAllItems();
+    language()->deleteAllItems();
     loadLanguages();
   }
 
@@ -993,16 +1157,51 @@ private:
     themeList()->layout();
   }
 
+  void loadExtensionsByCategory(const Extension::Category category,
+                                const std::string& label) {
+    bool hasItems = false;
+    auto sep = new ExtensionCategorySeparator(category, label);
+    extensionsList()->addChild(sep);
+    for (auto e : App::instance()->extensions()) {
+      if (e->category() == category) {
+        ExtensionItem* item = new ExtensionItem(e);
+        extensionsList()->addChild(item);
+        hasItems = true;
+      }
+    }
+    sep->setVisible(hasItems);
+  }
+
   void loadExtensions() {
     // Extensions already loaded
     if (extensionsList()->getItemsCount() > 0)
       return;
 
-    for (auto extension : App::instance()->extensions()) {
-      ExtensionItem* item = new ExtensionItem(extension);
-      extensionsList()->addChild(item);
-    }
-    extensionsList()->sortItems();
+    loadExtensionsByCategory(
+      Extension::Category::Languages,
+      Strings::options_language_extensions());
+
+    loadExtensionsByCategory(
+      Extension::Category::Themes,
+      Strings::options_theme_extensions());
+
+#ifdef ENABLE_SCRIPTING
+    loadExtensionsByCategory(
+      Extension::Category::Scripts,
+      Strings::options_script_extensions());
+#endif
+
+    loadExtensionsByCategory(
+      Extension::Category::Palettes,
+      Strings::options_palette_extensions());
+
+    loadExtensionsByCategory(
+      Extension::Category::DitheringMatrices,
+      Strings::options_dithering_matrix_extensions());
+
+    loadExtensionsByCategory(
+      Extension::Category::Multiple,
+      Strings::options_multiple_extensions());
 
     onExtensionChange();
     extensionsList()->layout();
@@ -1084,7 +1283,9 @@ private:
   void onExtensionChange() {
     ExtensionItem* item = dynamic_cast<ExtensionItem*>(extensionsList()->getSelectedChild());
     if (item && item->isInstalled()) {
-      disableExtension()->setText(item->isEnabled() ? "&Disable": "&Enable");
+      disableExtension()->setText(item->isEnabled() ?
+                                  Strings::options_disable_extension():
+                                  Strings::options_enable_extension());
       disableExtension()->processMnemonicFromText();
       disableExtension()->setEnabled(item->isEnabled() ? item->canBeDisabled(): true);
       uninstallExtension()->setEnabled(item->canBeUninstalled());
@@ -1101,7 +1302,7 @@ private:
     base::paths exts = { "aseprite-extension", "zip" };
     base::paths filename;
     if (!app::show_file_selector(
-          "Add Extension", "", exts,
+          Strings::options_add_extension_title(), "", exts,
           FileSelectorType::Open, filename))
       return;
 
@@ -1157,7 +1358,33 @@ private:
       // Add the new extension in the listbox
       ExtensionItem* item = new ExtensionItem(ext);
       extensionsList()->addChild(item);
-      extensionsList()->sortItems();
+      updateCategoryVisibility();
+      extensionsList()->sortItems(
+        [](Widget* a, Widget* b){
+          auto aSep = dynamic_cast<ExtensionCategorySeparator*>(a);
+          auto bSep = dynamic_cast<ExtensionCategorySeparator*>(b);
+          auto aItem = dynamic_cast<ExtensionItem*>(a);
+          auto bItem = dynamic_cast<ExtensionItem*>(b);
+          auto aCat = (aSep ? aSep->category():
+                       aItem ? aItem->category(): Extension::Category::None);
+          auto bCat = (bSep ? bSep->category():
+                       bItem ? bItem->category(): Extension::Category::None);
+          if (aCat < bCat)
+            return true;
+          else if (aCat == bCat) {
+            // There are no two separators with same category.
+            ASSERT(!(aSep && bSep));
+
+            if (aSep && !bSep)
+              return true;
+            else if (!aSep && bSep)
+              return false;
+            else
+              return (base::compare_filenames(a->text(), b->text()) < 0);
+          }
+          else
+            return false;
+        });
       extensionsList()->layout();
       extensionsList()->selectChild(item);
     }
@@ -1197,6 +1424,7 @@ private:
   void deleteExtensionItem(ExtensionItem* item) {
     // Remove the item from the list
     extensionsList()->removeChild(item);
+    updateCategoryVisibility();
     extensionsList()->layout();
     item->deferDelete();
   }
@@ -1262,6 +1490,22 @@ private:
     return paths;
   }
 
+  void updateCategoryVisibility() {
+    bool visibleCategories[int(Extension::Category::Max)];
+    for (auto& v : visibleCategories)
+      v = false;
+    for (auto w : extensionsList()->children()) {
+      if (auto item = dynamic_cast<ExtensionItem*>(w)) {
+        visibleCategories[int(item->category())] = true;
+      }
+    }
+    for (auto w : extensionsList()->children()) {
+      if (auto sep = dynamic_cast<ExtensionCategorySeparator*>(w))
+        sep->setVisible(visibleCategories[int(sep->category())]);
+    }
+  }
+
+  Context* m_context;
   Preferences& m_pref;
   DocumentPreferences& m_globPref;
   DocumentPreferences& m_docPref;
@@ -1273,6 +1517,7 @@ private:
   int m_restoreScreenScaling;
   int m_restoreUIScaling;
   std::vector<os::ColorSpacePtr> m_colorSpaces;
+  std::string m_templateTextForDisplayCS;
 };
 
 class OptionsCommand : public Command {

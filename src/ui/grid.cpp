@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -18,6 +18,7 @@
 #include "ui/theme.h"
 #include "ui/widget.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,8 +29,8 @@ using namespace gfx;
 
 Grid::Cell::Cell()
 {
-  parent = NULL;
-  child = NULL;
+  parent = nullptr;
+  child = nullptr;
   hspan = 0;
   vspan = 0;
   align = 0;
@@ -140,8 +141,8 @@ void Grid::onResize(ResizeEvent& ev)
     for (col=0; col<(int)m_colstrip.size(); ++col) {
       Cell* cell = m_cells[row][col];
 
-      if (cell->child != NULL &&
-          cell->parent == NULL &&
+      if (cell->child != nullptr &&
+          cell->parent == nullptr &&
           !(cell->child->hasFlags(HIDDEN))) {
         x = pos_x;
         y = pos_y;
@@ -252,7 +253,7 @@ void Grid::calculateSize()
   if (m_same_width_columns) {
     int max_w = 0;
     for (int col=0; col<(int)m_colstrip.size(); ++col)
-      max_w = MAX(max_w, m_colstrip[col].size);
+      max_w = std::max(max_w, m_colstrip[col].size);
 
     for (int col=0; col<(int)m_colstrip.size(); ++col)
       m_colstrip[col].size = max_w;
@@ -277,8 +278,8 @@ void Grid::calculateStripSize(std::vector<Strip>& colstrip,
       else
         cell = m_cells[col][row]; // Transposed
 
-      if (cell->child != NULL) {
-        if (cell->parent == NULL) {
+      if (cell->child != nullptr) {
+        if (cell->parent == nullptr) {
           // If the widget isn't hidden then we can request its size
           if (!(cell->child->hasFlags(HIDDEN))) {
             Size reqSize = cell->child->sizeHint();
@@ -337,8 +338,8 @@ void Grid::expandStrip(std::vector<Strip>& colstrip,
           cell_span = cell->vspan;
         }
 
-        if (cell->child != NULL &&
-            cell->parent == NULL &&
+        if (cell->child != nullptr &&
+            cell->parent == nullptr &&
             cell_size > 0) {
           ASSERT(cell_span > 0);
 
@@ -346,8 +347,8 @@ void Grid::expandStrip(std::vector<Strip>& colstrip,
             // Calculate the maximum (expand_count) in cell's columns.
             int max_expand_count = 0;
             for (i=col; i<col+cell_span; ++i)
-              max_expand_count = MAX(max_expand_count,
-                                     colstrip[i].expand_count);
+              max_expand_count = std::max(max_expand_count,
+                                          colstrip[i].expand_count);
 
             int expand = 0;     // How many columns have the maximum value of "expand_count"
             int last_expand = 0; // This variable is used to add the remainder space to the last column
@@ -399,8 +400,8 @@ void Grid::distributeStripSize(std::vector<Strip>& colstrip,
 
   int max_expand_count = 0;
   for (i=0; i<(int)colstrip.size(); ++i)
-    max_expand_count = MAX(max_expand_count,
-                           colstrip[i].expand_count);
+    max_expand_count = std::max(max_expand_count,
+                                colstrip[i].expand_count);
 
   int total_req = 0;
   int wantmore_count = 0;
@@ -463,7 +464,7 @@ bool Grid::putWidgetInCell(Widget* child, int hspan, int vspan, int align)
     for (col=0; col<(int)m_colstrip.size(); ++col) {
       cell = m_cells[row][col];
 
-      if (cell->child == NULL) {
+      if (cell->child == nullptr) {
         cell->child = child;
         cell->hspan = hspan;
         cell->vspan = vspan;
@@ -471,7 +472,7 @@ bool Grid::putWidgetInCell(Widget* child, int hspan, int vspan, int align)
 
         parentcell = cell;
         colbeg = col;
-        colend = MIN(col+hspan, (int)m_colstrip.size());
+        colend = std::min(col+hspan, (int)m_colstrip.size());
         rowend = row+vspan;
 
         expandRows(row+vspan);
@@ -482,8 +483,8 @@ bool Grid::putWidgetInCell(Widget* child, int hspan, int vspan, int align)
           // If these asserts fails, it's really possible that you
           // specified bad values for hspan or vspan (they are
           // overlapping with other cells).
-          ASSERT(cell->parent == NULL);
-          ASSERT(cell->child == NULL);
+          ASSERT(cell->parent == nullptr);
+          ASSERT(cell->child == nullptr);
 
           cell->parent = parentcell;
           cell->child = child;
@@ -495,8 +496,8 @@ bool Grid::putWidgetInCell(Widget* child, int hspan, int vspan, int align)
           for (col=colbeg; col<colend; ++col) {
             cell = m_cells[row][col];
 
-            ASSERT(cell->parent == NULL);
-            ASSERT(cell->child == NULL);
+            ASSERT(cell->parent == nullptr);
+            ASSERT(cell->child == nullptr);
 
             cell->parent = parentcell;
             cell->child = child;
@@ -541,8 +542,8 @@ void Grid::incColSize(int col, int size)
   for (int row=0; row<(int)m_rowstrip.size(); ) {
     Cell* cell = m_cells[row][col];
 
-    if (cell->child != NULL) {
-      if (cell->parent != NULL)
+    if (cell->child != nullptr) {
+      if (cell->parent != nullptr)
         cell->parent->w -= size;
       else
         cell->w -= size;
@@ -561,8 +562,8 @@ void Grid::incRowSize(int row, int size)
   for (int col=0; col<(int)m_colstrip.size(); ) {
     Cell* cell = m_cells[row][col];
 
-    if (cell->child != NULL) {
-      if (cell->parent != NULL)
+    if (cell->child != nullptr) {
+      if (cell->parent != nullptr)
         cell->parent->h -= size;
       else
         cell->h -= size;

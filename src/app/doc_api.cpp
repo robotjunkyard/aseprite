@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -24,20 +25,20 @@
 #include "app/cmd/move_layer.h"
 #include "app/cmd/remove_cel.h"
 #include "app/cmd/remove_frame.h"
-#include "app/cmd/remove_frame_tag.h"
 #include "app/cmd/remove_layer.h"
+#include "app/cmd/remove_tag.h"
 #include "app/cmd/replace_image.h"
 #include "app/cmd/set_cel_bounds.h"
 #include "app/cmd/set_cel_frame.h"
 #include "app/cmd/set_cel_opacity.h"
 #include "app/cmd/set_cel_position.h"
 #include "app/cmd/set_frame_duration.h"
-#include "app/cmd/set_frame_tag_range.h"
 #include "app/cmd/set_mask.h"
 #include "app/cmd/set_mask_position.h"
 #include "app/cmd/set_palette.h"
 #include "app/cmd/set_slice_key.h"
 #include "app/cmd/set_sprite_size.h"
+#include "app/cmd/set_tag_range.h"
 #include "app/cmd/set_total_frames.h"
 #include "app/cmd/set_transparent_color.h"
 #include "app/color_target.h"
@@ -45,22 +46,67 @@
 #include "app/context.h"
 #include "app/doc.h"
 #include "app/doc_undo.h"
+#include "app/pref/preferences.h"
+#include "app/snap_to_grid.h"
 #include "app/transaction.h"
+#include "app/util/autocrop.h"
 #include "doc/algorithm/flip_image.h"
 #include "doc/algorithm/shrink_bounds.h"
 #include "doc/cel.h"
-#include "doc/frame_tag.h"
-#include "doc/frame_tags.h"
 #include "doc/mask.h"
 #include "doc/palette.h"
 #include "doc/slice.h"
+#include "doc/tag.h"
+#include "doc/tags.h"
 #include "render/render.h"
 
+#include <algorithm>
+#include <iterator>
 #include <set>
+#include <vector>
+
+#include "gfx/rect_io.h"
+#include "gfx/point_io.h"
 
 #define TRACE_DOCAPI(...)
 
 namespace app {
+
+DocApi::HandleLinkedCels::HandleLinkedCels(
+  DocApi& api,
+  doc::LayerImage* srcLayer, const doc::frame_t srcFrame,
+  doc::LayerImage* dstLayer, const doc::frame_t dstFrame)
+  : m_api(api)
+  , m_srcDataId(doc::NullId)
+  , m_dstLayer(dstLayer)
+  , m_dstFrame(dstFrame)
+  , m_created(false)
+{
+  if (Cel* srcCel = srcLayer->cel(srcFrame)) {
+    auto it = m_api.m_linkedCels.find(srcCel->data()->id());
+    if (it != m_api.m_linkedCels.end()) {
+      Cel* dstRelated = it->second;
+      if (dstRelated && dstRelated->layer() == dstLayer) {
+        // Create a link
+        m_api.m_transaction.execute(
+          new cmd::CopyCel(
+            dstRelated->layer(), dstRelated->frame(),
+            dstLayer, dstFrame, true));
+        m_created = true;
+        return;
+      }
+    }
+    m_srcDataId = srcCel->data()->id();
+  }
+}
+
+DocApi::HandleLinkedCels::~HandleLinkedCels()
+{
+  if (m_srcDataId != doc::NullId) {
+    if (Cel* dstCel = m_dstLayer->cel(m_dstFrame))
+      m_api.m_linkedCels[m_srcDataId] = dstCel;
+  }
+}
 
 DocApi::DocApi(Doc* document, Transaction& transaction)
   : m_document(document)
@@ -78,55 +124,20 @@ void DocApi::setSpriteTransparentColor(Sprite* sprite, color_t maskColor)
   m_transaction.execute(new cmd::SetTransparentColor(sprite, maskColor));
 }
 
-void DocApi::cropSprite(Sprite* sprite, const gfx::Rect& bounds)
+void DocApi::cropSprite(Sprite* sprite,
+                        const gfx::Rect& bounds,
+                        const bool trimOutside)
 {
+  ASSERT(m_document == static_cast<Doc*>(sprite->document()));
+
   setSpriteSize(sprite, bounds.w, bounds.h);
 
-  Doc* doc = static_cast<Doc*>(sprite->document());
   LayerList layers = sprite->allLayers();
   for (Layer* layer : layers) {
     if (!layer->isImage())
       continue;
 
-    std::set<ObjectId> visited;
-    CelIterator it = ((LayerImage*)layer)->getCelBegin();
-    CelIterator end = ((LayerImage*)layer)->getCelEnd();
-    for (; it != end; ++it) {
-      Cel* cel = *it;
-      if (visited.find(cel->data()->id()) != visited.end())
-        continue;
-      visited.insert(cel->data()->id());
-
-      if (layer->isBackground()) {
-        Image* image = cel->image();
-        if (image && !cel->link()) {
-          ASSERT(cel->x() == 0);
-          ASSERT(cel->y() == 0);
-
-          // Create the new image through a crop
-          ImageRef new_image(
-            crop_image(image,
-              bounds.x, bounds.y,
-              bounds.w, bounds.h,
-              doc->bgColor(layer)));
-
-          // Replace the image in the stock that is pointed by the cel
-          replaceImage(sprite, cel->imageRef(), new_image);
-        }
-      }
-      else if (layer->isReference()) {
-        // Update the ref cel's bounds
-        gfx::RectF newBounds = cel->boundsF();
-        newBounds.x -= bounds.x;
-        newBounds.y -= bounds.y;
-        m_transaction.execute(new cmd::SetCelBoundsF(cel, newBounds));
-      }
-      else {
-        // Update the cel's position
-        setCelPosition(sprite, cel,
-          cel->x()-bounds.x, cel->y()-bounds.y);
-      }
-    }
+    cropImageLayer(static_cast<LayerImage*>(layer), bounds, trimOutside);
   }
 
   // Update mask position
@@ -137,14 +148,30 @@ void DocApi::cropSprite(Sprite* sprite, const gfx::Rect& bounds)
   // Update slice positions
   if (bounds.origin() != gfx::Point(0, 0)) {
     for (auto& slice : m_document->sprite()->slices()) {
-      for (auto& k : *slice) {
+      Slice::List::List keys;
+      std::copy(slice->begin(), slice->end(),
+                std::back_inserter(keys));
+
+      for (auto& k : keys) {
         const SliceKey& key = *k.value();
         if (key.isEmpty())
           continue;
 
+        gfx::Rect newSliceBounds(key.bounds());
+        newSliceBounds.offset(-bounds.origin());
+
         SliceKey newKey = key;
-        newKey.setBounds(
-          gfx::Rect(newKey.bounds()).offset(-bounds.origin()));
+
+        // If the slice is outside and the user doesn't want the out
+        // of canvas content, we delete the slice.
+        if (trimOutside) {
+          newSliceBounds &= gfx::Rect(bounds.size());
+          if (newSliceBounds.isEmpty())
+            newKey = SliceKey(); // An empty key (so we remove this key)
+        }
+
+        if (!newKey.isEmpty())
+          newKey.setBounds(newSliceBounds);
 
         // As SliceKey::center() and pivot() properties are relative
         // to the bounds(), we don't need to adjust them.
@@ -156,26 +183,139 @@ void DocApi::cropSprite(Sprite* sprite, const gfx::Rect& bounds)
   }
 }
 
-void DocApi::trimSprite(Sprite* sprite)
+void DocApi::cropImageLayer(LayerImage* layer,
+                            const gfx::Rect& bounds,
+                            const bool trimOutside)
 {
-  gfx::Rect bounds;
+  std::set<ObjectId> visited;
+  CelList cels, clearCels;
+  layer->getCels(cels);
+  for (Cel* cel : cels) {
+    if (visited.find(cel->data()->id()) != visited.end())
+      continue;
+    visited.insert(cel->data()->id());
 
-  std::unique_ptr<Image> image_wrap(Image::create(sprite->pixelFormat(),
-                                                  sprite->width(),
-                                                  sprite->height()));
-  Image* image = image_wrap.get();
-  render::Render render;
-
-  for (frame_t frame(0); frame<sprite->totalFrames(); ++frame) {
-    render.renderSprite(image, sprite, frame);
-
-    // TODO configurable (what color pixel to use as "refpixel",
-    // here we are using the top-left pixel by default)
-    gfx::Rect frameBounds;
-    if (doc::algorithm::shrink_bounds(image, frameBounds, get_pixel(image, 0, 0)))
-      bounds = bounds.createUnion(frameBounds);
+    if (!cropCel(layer, cel, bounds, trimOutside)) {
+      // Delete this cel and its links
+      clearCels.push_back(cel);
+    }
   }
 
+  for (Cel* cel : clearCels)
+    clearCelAndAllLinks(cel);
+}
+
+// Returns false if the cel (and its links) must be deleted after this
+bool DocApi::cropCel(LayerImage* layer,
+                     Cel* cel,
+                     const gfx::Rect& bounds,
+                     const bool trimOutside)
+{
+  if (layer->isBackground()) {
+    Image* image = cel->image();
+    if (image && !cel->link()) {
+      ASSERT(cel->x() == 0);
+      ASSERT(cel->y() == 0);
+
+      ImageRef newImage(
+        crop_image(image,
+                   bounds.x, bounds.y,
+                   bounds.w, bounds.h,
+                   m_document->bgColor(layer)));
+
+      replaceImage(cel->sprite(),
+                   cel->imageRef(),
+                   newImage);
+    }
+    return true;
+  }
+
+  if (layer->isReference()) {
+    // Update the ref cel's bounds
+    gfx::RectF newBounds = cel->boundsF();
+    newBounds.x -= bounds.x;
+    newBounds.y -= bounds.y;
+    m_transaction.execute(new cmd::SetCelBoundsF(cel, newBounds));
+    return true;
+  }
+
+  gfx::Point newCelPos(cel->position() - bounds.origin());
+
+  // This is the complex case: we want to crop a transparent cel and
+  // remove the content that is outside the sprite canvas. This might
+  // generate one or two of the following Cmd:
+  // 1. Clear the cel ("return false" will generate a "cmd::ClearCel"
+  //    then) if the cel bounds will be totally outside in the new
+  //    canvas size
+  // 2. Replace the cel image if the cel must be cut in
+  //    some edge because it's not totally contained
+  // 3. Just set the cel position (the most common case)
+  //    if the cel image will be completely inside the new
+  //    canvas
+  if (trimOutside) {
+    Image* image = cel->image();
+    if (image && !cel->link()) {
+      gfx::Rect newCelBounds = (bounds & cel->bounds());
+
+      if (newCelBounds.isEmpty())
+        return false;
+
+      newCelBounds.offset(-bounds.origin());
+
+      gfx::Point paintPos(newCelBounds.x - newCelPos.x,
+                          newCelBounds.y - newCelPos.y);
+
+      newCelPos = newCelBounds.origin();
+
+      // Crop the image
+      ImageRef newImage(
+        crop_image(image,
+                   paintPos.x, paintPos.y,
+                   newCelBounds.w, newCelBounds.h,
+                   m_document->bgColor(layer)));
+
+      // Try to shrink the image ignoring transparent borders
+      gfx::Rect frameBounds;
+      if (doc::algorithm::shrink_bounds(newImage.get(),
+                                        frameBounds,
+                                        newImage->maskColor())) {
+        // In this case the new cel image can be even smaller
+        if (frameBounds != newImage->bounds()) {
+          newImage = ImageRef(
+            crop_image(newImage.get(),
+                       frameBounds.x, frameBounds.y,
+                       frameBounds.w, frameBounds.h,
+                       m_document->bgColor(layer)));
+
+          newCelPos += frameBounds.origin();
+        }
+      }
+      else {
+        // Delete this cel and its links
+        return false;
+      }
+
+      // If it's the same iamge, we can re-use the cel image and just
+      // move the cel position.
+      if (!is_same_image(cel->image(), newImage.get())) {
+        replaceImage(cel->sprite(),
+                     cel->imageRef(),
+                     newImage);
+      }
+    }
+  }
+
+  // Update the cel's position
+  setCelPosition(
+    cel->sprite(), cel,
+    newCelPos.x,
+    newCelPos.y);
+  return true;
+}
+
+void DocApi::trimSprite(Sprite* sprite, const bool byGrid)
+{
+  gfx::Rect bounds = get_trimmed_bounds(sprite, byGrid);
   if (!bounds.isEmpty())
     cropSprite(sprite, bounds);
 }
@@ -190,9 +330,9 @@ void DocApi::addFrame(Sprite* sprite, frame_t newFrame)
 void DocApi::addEmptyFrame(Sprite* sprite, frame_t newFrame)
 {
   m_transaction.execute(new cmd::AddFrame(sprite, newFrame));
-  adjustFrameTags(sprite, newFrame, +1,
-                  kDropBeforeFrame,
-                  kDefaultTagsAdjustment);
+  adjustTags(sprite, newFrame, +1,
+             kDropBeforeFrame,
+             kDefaultTagsAdjustment);
 }
 
 void DocApi::addEmptyFramesTo(Sprite* sprite, frame_t newFrame)
@@ -202,30 +342,44 @@ void DocApi::addEmptyFramesTo(Sprite* sprite, frame_t newFrame)
 }
 
 void DocApi::copyFrame(Sprite* sprite,
-                            const frame_t fromFrame,
-                            const frame_t newFrame,
-                            const DropFramePlace dropFramePlace,
-                            const TagsHandling tagsHandling)
+                       frame_t fromFrame,
+                       const frame_t newFrame0,
+                       const DropFramePlace dropFramePlace,
+                       const TagsHandling tagsHandling)
 {
   ASSERT(sprite);
+
+  frame_t newFrame =
+    (dropFramePlace == kDropBeforeFrame ? newFrame0:
+                                          newFrame0+1);
+
   m_transaction.execute(
     new cmd::CopyFrame(
-      sprite, fromFrame,
-      (dropFramePlace == kDropBeforeFrame ? newFrame:
-                                            newFrame+1)));
+      sprite, fromFrame, newFrame));
 
-  adjustFrameTags(sprite, newFrame, +1,
-                  dropFramePlace,
-                  tagsHandling);
+  if (fromFrame >= newFrame)
+    ++fromFrame;
+
+  for (Layer* layer : sprite->allLayers()) {
+    if (layer->isImage()) {
+      copyCel(
+        static_cast<LayerImage*>(layer), fromFrame,
+        static_cast<LayerImage*>(layer), newFrame);
+    }
+  }
+
+  adjustTags(sprite, newFrame0, +1,
+             dropFramePlace,
+             tagsHandling);
 }
 
 void DocApi::removeFrame(Sprite* sprite, frame_t frame)
 {
   ASSERT(frame >= 0);
   m_transaction.execute(new cmd::RemoveFrame(sprite, frame));
-  adjustFrameTags(sprite, frame, -1,
-                  kDropBeforeFrame,
-                  kDefaultTagsAdjustment);
+  adjustTags(sprite, frame, -1,
+             kDropBeforeFrame,
+             kDefaultTagsAdjustment);
 }
 
 void DocApi::setTotalFrames(Sprite* sprite, frame_t frames)
@@ -261,7 +415,7 @@ void DocApi::moveFrame(Sprite* sprite,
   if (frame       >= 0 && frame       <= sprite->lastFrame()   &&
       beforeFrame >= 0 && beforeFrame <= sprite->lastFrame()+1 &&
       ((frame != beforeFrame) ||
-       (!sprite->frameTags().empty() &&
+       (!sprite->tags().empty() &&
         tagsHandling != kDontAdjustTags))) {
     // Change the frame-lengths.
     int frlen_aux = sprite->frameDuration(frame);
@@ -280,10 +434,10 @@ void DocApi::moveFrame(Sprite* sprite,
     }
 
     if (tagsHandling != kDontAdjustTags) {
-      adjustFrameTags(sprite, frame, -1, dropFramePlace, tagsHandling);
+      adjustTags(sprite, frame, -1, dropFramePlace, tagsHandling);
       if (targetFrame >= frame)
         --targetFrame;
-      adjustFrameTags(sprite, targetFrame, +1, dropFramePlace, tagsHandling);
+      adjustTags(sprite, targetFrame, +1, dropFramePlace, tagsHandling);
     }
 
     // Change cel positions.
@@ -368,7 +522,8 @@ void DocApi::setCelPosition(Sprite* sprite, Cel* cel, int x, int y)
 {
   ASSERT(cel);
 
-  m_transaction.execute(new cmd::SetCelPosition(cel, x, y));
+  if (cel->x() != x || cel->y() != y)
+    m_transaction.execute(new cmd::SetCelPosition(cel, x, y));
 }
 
 void DocApi::setCelOpacity(Sprite* sprite, Cel* cel, int newOpacity)
@@ -391,11 +546,36 @@ void DocApi::clearCel(Cel* cel)
   m_transaction.execute(new cmd::ClearCel(cel));
 }
 
+void DocApi::clearCelAndAllLinks(Cel* cel)
+{
+  ASSERT(cel);
+
+  ObjectId dataId = cel->data()->id();
+
+  CelList cels;
+  cel->layer()->getCels(cels);
+  for (Cel* cel2 : cels) {
+    if (cel2->data()->id() == dataId)
+      clearCel(cel2);
+  }
+}
+
 void DocApi::moveCel(
   LayerImage* srcLayer, frame_t srcFrame,
   LayerImage* dstLayer, frame_t dstFrame)
 {
   ASSERT(srcLayer != dstLayer || srcFrame != dstFrame);
+  if (srcLayer == dstLayer && srcFrame == dstFrame)
+    return;                     // Nothing to be done
+
+  HandleLinkedCels handleLinkedCels(
+    *this, srcLayer, srcFrame, dstLayer, dstFrame);
+  if (handleLinkedCels.linkWasCreated()) {
+    if (Cel* srcCel = srcLayer->cel(srcFrame))
+      clearCel(srcCel);
+    return;
+  }
+
   m_transaction.execute(new cmd::MoveCel(
       srcLayer, srcFrame,
       dstLayer, dstFrame, dstLayer->isContinuous()));
@@ -403,26 +583,24 @@ void DocApi::moveCel(
 
 void DocApi::copyCel(
   LayerImage* srcLayer, frame_t srcFrame,
-  LayerImage* dstLayer, frame_t dstFrame)
-{
-  copyCel(
-    srcLayer, srcFrame,
-    dstLayer, dstFrame, dstLayer->isContinuous());
-}
-
-void DocApi::copyCel(
-  LayerImage* srcLayer, frame_t srcFrame,
-  LayerImage* dstLayer, frame_t dstFrame, bool continuous)
+  LayerImage* dstLayer, frame_t dstFrame,
+  const bool* forceContinuous)
 {
   ASSERT(srcLayer != dstLayer || srcFrame != dstFrame);
-
   if (srcLayer == dstLayer && srcFrame == dstFrame)
     return;                     // Nothing to be done
+
+  HandleLinkedCels handleLinkedCels(
+    *this, srcLayer, srcFrame, dstLayer, dstFrame);
+  if (handleLinkedCels.linkWasCreated())
+    return;
 
   m_transaction.execute(
     new cmd::CopyCel(
       srcLayer, srcFrame,
-      dstLayer, dstFrame, continuous));
+      dstLayer, dstFrame,
+      (forceContinuous ? *forceContinuous:
+                         dstLayer->isContinuous())));
 }
 
 void DocApi::swapCel(
@@ -597,14 +775,14 @@ void DocApi::setPalette(Sprite* sprite, frame_t frame, const Palette* newPalette
   }
 }
 
-void DocApi::adjustFrameTags(Sprite* sprite,
-                                  const frame_t frame,
-                                  const frame_t delta,
-                                  const DropFramePlace dropFramePlace,
-                                  const TagsHandling tagsHandling)
+void DocApi::adjustTags(Sprite* sprite,
+                        const frame_t frame,
+                        const frame_t delta,
+                        const DropFramePlace dropFramePlace,
+                        const TagsHandling tagsHandling)
 {
   TRACE_DOCAPI(
-    "\n  adjustFrameTags %s frame %d delta=%d tags=%s:\n",
+    "\n  adjustTags %s frame %d delta=%d tags=%s:\n",
     (dropFramePlace == kDropBeforeFrame ? "before": "after"),
     frame, delta,
     (tagsHandling == kDefaultTagsAdjustment ? "default":
@@ -614,9 +792,9 @@ void DocApi::adjustFrameTags(Sprite* sprite,
 
   // As FrameTag::setFrameRange() changes m_frameTags, we need to use
   // a copy of this collection
-  std::vector<FrameTag*> tags(sprite->frameTags().begin(), sprite->frameTags().end());
+  std::vector<Tag*> tags(sprite->tags().begin(), sprite->tags().end());
 
-  for (FrameTag* tag : tags) {
+  for (Tag* tag : tags) {
     frame_t from = tag->fromFrame();
     frame_t to = tag->toFrame();
 
@@ -657,9 +835,9 @@ void DocApi::adjustFrameTags(Sprite* sprite,
     if (from != tag->fromFrame() ||
         to != tag->toFrame()) {
       if (from > to)
-        m_transaction.execute(new cmd::RemoveFrameTag(sprite, tag));
+        m_transaction.execute(new cmd::RemoveTag(sprite, tag));
       else
-        m_transaction.execute(new cmd::SetFrameTagRange(tag, from, to));
+        m_transaction.execute(new cmd::SetTagRange(tag, from, to));
     }
   }
 }
